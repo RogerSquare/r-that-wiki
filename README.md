@@ -27,35 +27,11 @@ src/
 
 ## Adding a new entry
 
-1. Pick the right section (`components/`, `patterns/`, `snippets/`, `projects/`)
-2. Create a new `.mdx` file. Frontmatter:
-   ```yaml
-   ---
-   title: The thing
-   description: One-line for search and hover
-   ---
-   ```
-3. Start with a `> Source:` line linking to the canonical code
-4. Write the entry in this order — this is the teaching order:
-   - **What it is** — one sentence
-   - **Why it exists** — the backstory (this is the most useful section for future-you)
-   - **Live** — `<Component client:load />` if renderable in a browser
-   - **Code** — the core of the idea (not the whole file)
-   - **How it's used** — bulleted list of projects + call sites
-   - **Gotchas** — what breaks, what surprises, what to avoid
-5. If the entry has a live render, add a `src/examples/<name>.tsx` with a simplified version of the component. Provenance comment at the top:
-   ```ts
-   // Source: <repo>/<path>
-   // Simplified for the wiki: removed <specific app-contextual things>
-   ```
+See the [Style guide](https://wiki.r-that.com/meta/style-guide/) in the wiki itself — it's the canonical reference for entry structure, categories, tone, and the `src/examples/` rule.
 
-See `src/content/docs/components/btn-icon.mdx` for the canonical shape.
+Quick shape: create `src/content/docs/<section>/<slug>.mdx`, start with a `> Source:` line, then sections in this order: *What it is* → *Why it exists* → *Live* → *Code* → *How it's used* → *Gotchas*.
 
-## Conventions
-
-- Examples are **teaching artifacts**, not mirrors. Simplify ruthlessly — drop auth wiring, error boundaries, telemetry, app-specific providers. Keep the shape of the idea.
-- Write the *why* more than the *what*. Code already shows what.
-- When in doubt, update an existing entry and add to "How it's used" instead of creating a new entry.
+`src/content/docs/components/btn-icon.mdx` is the canonical example.
 
 ## Deployment
 

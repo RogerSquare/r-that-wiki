@@ -18,6 +18,7 @@ export default defineConfig({
         { label: 'Patterns', autogenerate: { directory: 'patterns' } },
         { label: 'Snippets', autogenerate: { directory: 'snippets' } },
         { label: 'Projects', autogenerate: { directory: 'projects' } },
+        { label: 'Meta', autogenerate: { directory: 'meta' } },
       ],
     }),
     react(),

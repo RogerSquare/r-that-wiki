@@ -1,0 +1,72 @@
+---
+title: Style guide
+description: How to write a deep-dive entry that's actually useful six months later.
+---
+
+The short version: **write for future-you at 2 AM, not for strangers**. You already know what the thing does; what you need is why it exists and what breaks it.
+
+## Structure of an entry
+
+Required sections, in this order:
+
+1. **Frontmatter** — `title`, `description` (search uses these)
+2. **`> Source:` line** — links to the canonical code. Always first, above any prose.
+3. **What it is** — one sentence. No more.
+4. **Why it exists** — the backstory. What was there before? What problem did it solve? This is the highest-value section; don't skimp.
+5. **Live** — `<Component client:load />` if the thing is browser-renderable
+6. **Code** — the *interesting* part. A whole file dump is not code explanation — it's file-copying.
+7. **How it's used** — bulleted list of projects + call sites. Helps future-you grep back to real usages.
+8. **Gotchas** — what breaks, what's surprising, what you already had to debug once.
+
+Optional sections: *Performance notes*, *Related entries*, *Alternatives considered*.
+
+## Categories — what goes where
+
+| Folder | What belongs | Litmus test |
+|---|---|---|
+| `components/` | UI primitives and composite components | Does it take props and return JSX? |
+| `patterns/` | Architectural ideas that appear in >1 project | Could I apply this to a project I haven't built yet? |
+| `snippets/` | Self-contained fragments (not a full component, not a pattern) | Is it under ~40 lines and solves one problem? |
+| `projects/` | Whole-project architecture tours | Is this a one-pager explaining how everything fits? |
+
+If it doesn't fit, it's probably too broad. Split it.
+
+## The `src/examples/` rule
+
+Example files are **teaching artifacts**, not mirrors of production code.
+
+- **Drop**: auth wiring, error boundaries, telemetry, app-specific context providers, feature flags
+- **Keep**: the shape of the idea, enough that the live render actually runs
+- **Always**: provenance comment at the top pinning the source:
+  ```ts
+  // Source: artifex/frontend/src/components/PhotoViewer.jsx
+  // Simplified for the wiki: removed AuthContext, inlined button styles.
+  ```
+
+Drift between the example and the real source is fine. The entry teaches the *idea*, not the exact current implementation.
+
+## Tone
+
+- Short sentences. Complete thoughts.
+- Explain *why* more than *what*. Code already shows what.
+- No marketing voice. No "elegantly", "simply", "robust" — if the word would survive being deleted, delete it.
+- First person singular is OK. It's your wiki.
+- Backstory is gold. "We tried X first, it broke because Y, so we switched to Z" is the story that future-you will thank you for.
+
+## When to write a new entry vs. update an existing one
+
+- **Same idea, different project** → update the existing. Add a bullet to "How it's used".
+- **Genuinely new concept** → new entry. Cross-link related ones at the bottom.
+- **Edge case of an existing pattern** → a new section inside the existing entry, not a new entry.
+
+If you're unsure, err toward updating. Drift across fragmented entries is worse than a longer entry with cross-references.
+
+## Before you commit
+
+- [ ] Build passes (`npm run build`)
+- [ ] Sidebar auto-generation picked up the new file (check `npm run dev`)
+- [ ] If you added `src/examples/...`, the live render actually works
+- [ ] You've linked the Source repo/path at the top
+- [ ] "Why it exists" has at least 2 sentences of real backstory
+
+That's it. This guide itself follows the rule: short, direct, future-you is the audience.
