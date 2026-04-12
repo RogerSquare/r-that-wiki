@@ -1,0 +1,113 @@
+---
+title: Ink over SSH (terminal React for remote viewers)
+description: Render an Ink app into an SSH channel. Stream bridging, newline fixes, color forcing, the whole list.
+---
+
+> **Source:** [cairn/ts/src/ssh-server.tsx](https://github.com/RogerSquare/cairn/blob/main/ts/src/ssh-server.tsx)
+> **Category:** Pattern — TUI / networking
+
+**Ink over SSH** — expose your [Ink](https://term.ink/) app to anyone with an SSH client. Use the `ssh2` package to accept connections, bridge the channel to Ink's stdout/stdin expectations, and render React-for-terminals to the remote session.
+
+## What it is
+
+An SSH server that, on each connection, spins up a fresh Ink render targeted at that client's terminal. Keystrokes flow in, ANSI output flows out. The server itself is a Node process; no per-user shell, no filesystem exposure.
+
+## Why it exists
+
+**The problem:** A portfolio you can reach via `ssh r-that.com` is more memorable than any landing page. Getting there means:
+
+1. Ink renders to `process.stdout` / reads from `process.stdin`. An SSH session gives you a *channel* instead.
+2. Ink calls `stdout.cursorTo`, `stdout.clearLine`, `stdout.moveCursor` — methods that exist on TTY streams, not on `ssh2`'s `Channel` object.
+3. Terminals over SSH expect `\r\n` line endings. Ink emits `\n`. Without the fix, every line stair-steps.
+4. Chalk detects color support from `process.stdout.isTTY`. An SSH channel isn't a TTY to Node, so Chalk outputs monochrome.
+
+**The fix:** a small adapter that wraps the SSH channel to look like a `WriteStream` to Ink, and three environment tweaks.
+
+## Shape
+
+```typescript
+import { Server } from 'ssh2';
+import { render } from 'ink';
+import { Writable } from 'stream';
+import React from 'react';
+import { Portfolio } from './Portfolio';
+
+const server = new Server({ hostKeys: [hostKey] }, (client) => {
+  client.on('authentication', ctx => ctx.accept());
+
+  client.on('session', (accept) => {
+    const session = accept();
+    let cols = 80, rows = 24;
+
+    session.on('pty', (accept, reject, info) => {
+      cols = info.cols; rows = info.rows;
+      accept();
+    });
+
+    session.on('window-change', (accept, reject, info) => {
+      cols = info.cols; rows = info.rows;
+    });
+
+    session.on('shell', (accept) => {
+      const channel = accept();
+
+      // 1. Wrap the channel to satisfy Ink's WriteStream expectations
+      const stdout = Object.assign(new Writable({
+        write(chunk, enc, cb) {
+          // 2. Fix newlines for SSH terminals
+          channel.write(chunk.toString().replace(/(?<!\r)\n/g, '\r\n'));
+          cb();
+        },
+      }), {
+        columns: cols,
+        rows,
+        isTTY: true,
+        cursorTo: (x, y) => channel.write(`\x1b[${y ?? 1};${x + 1}H`),
+        clearLine: () => channel.write('\x1b[2K'),
+        moveCursor: (dx, dy) => {
+          if (dx > 0) channel.write(`\x1b[${dx}C`);
+          if (dx < 0) channel.write(`\x1b[${-dx}D`);
+          if (dy > 0) channel.write(`\x1b[${dy}B`);
+          if (dy < 0) channel.write(`\x1b[${-dy}A`);
+        },
+      });
+
+      const stdin = channel as unknown as NodeJS.ReadStream;
+      stdin.isTTY = true;
+      stdin.setRawMode = () => stdin;
+
+      // 3. Force color before rendering
+      process.env.FORCE_COLOR = '3';
+
+      const app = render(<Portfolio />, { stdout, stdin, exitOnCtrlC: false });
+
+      channel.on('close', () => app.unmount());
+    });
+  });
+});
+
+server.listen(22, '0.0.0.0');
+```
+
+## How it's used
+
+- **Cairn** — `ssh r-that.com` renders the portfolio TUI to the visitor's terminal
+- **Pattern generalizes** to any Ink app you'd want to share without distributing a binary — documentation browsers, status dashboards, interactive tutorials
+
+## Gotchas
+
+- **Chalk's level needs a manual bump too.** `process.env.FORCE_COLOR = '3'` sets Chalk's starting guess; if you need to be sure, also `chalk.level = 3` after importing. Different Chalk versions pick up the env var at different points.
+- **`columns` and `rows` must be kept fresh.** When the client resizes their terminal, the `window-change` event fires. Update the wrapper's properties *and* trigger an Ink re-render (emit `'resize'` or unmount/remount).
+- **Don't forget `isTTY: true`.** Without it, Ink falls back to a no-op renderer thinking it's being piped.
+- **Raw mode is a no-op over SSH.** Real `setRawMode` toggles termios on a real TTY — the SSH channel already delivers raw bytes. Stub the method to return `this`; don't error.
+- **The server runs as root if you listen on port 22.** Either bind as root then drop privileges, or run on a non-privileged port and use iptables to redirect 22 → e.g. 2222.
+- **Host key is long-lived.** Lose it, visitors get a spooky "host identification changed" warning. See [host-key-persist-or-generate](../host-key-persist-or-generate/).
+- **Client-side terminal quirks.** Windows `cmd.exe` has different ANSI support than macOS Terminal. Test on at least one of each. Also: PuTTY sends `\r` only, not `\r\n`, on Enter.
+- **`exitOnCtrlC: false`** in the Ink render options — otherwise Ctrl+C from a visitor kills *your server process*. Instead, handle the key in your component and let them "quit the portfolio" without killing anything.
+
+## See also
+
+- [projects/cairn](../../projects/cairn/) — the app that ships this
+- [patterns/host-key-persist-or-generate](../host-key-persist-or-generate/) — the long-lived SSH host identity
+- [patterns/per-ip-ssh-connection-limit](../per-ip-ssh-connection-limit/) — rate-limit the connect endpoint
+- [patterns/ssh-idle-timeout](../ssh-idle-timeout/) — cleanup for stuck sessions

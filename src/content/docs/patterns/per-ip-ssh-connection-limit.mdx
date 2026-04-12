@@ -1,0 +1,85 @@
+---
+title: Per-IP SSH connection limit
+description: Cap the number of concurrent connections from any single IP. Cheap DoS protection for an SSH-facing service.
+---
+
+> **Source:** [cairn/ts/src/ssh-server.tsx](https://github.com/RogerSquare/cairn/blob/main/ts/src/ssh-server.tsx)
+> **Category:** Pattern — networking
+
+**Per-IP SSH connection limit** — a single map keyed by remote IP, incremented on connect and decremented on close. Reject connections beyond the cap. Prevents one client from exhausting your connection slots without needing kernel-level firewall rules.
+
+## What it is
+
+An in-process counter. When the server accepts a connection, look up the client IP. If the count for that IP is at or above the limit, reject. Otherwise increment, attach a close handler that decrements. That's all.
+
+## Why it exists
+
+**The problem:** An open SSH portfolio on port 22 is an open door. Anyone — or anything — can hammer it:
+
+1. **Accidental loops** — a client script with a reconnect bug opens 100 sessions
+2. **Malicious scanning** — botnets spraying credential attempts
+3. **Greedy visitors** — one enthusiastic person exhausts all 20 slots
+
+**The fix:** cap concurrent sessions per IP (small number like 2-5). Primary defense is killing obvious abuse; secondary is a signal in logs for anything unusual.
+
+## Shape
+
+```typescript
+const MAX_PER_IP = 5;
+const activeConnections = new Map<string, number>();
+
+server.on('connection', (client, info) => {
+  const ip = info.ip;
+  const count = activeConnections.get(ip) ?? 0;
+
+  if (count >= MAX_PER_IP) {
+    console.warn(`[ssh] rejecting ${ip} — at limit (${count}/${MAX_PER_IP})`);
+    client.end();
+    return;
+  }
+
+  activeConnections.set(ip, count + 1);
+
+  client.on('close', () => {
+    const n = activeConnections.get(ip) ?? 1;
+    if (n <= 1) activeConnections.delete(ip);
+    else activeConnections.set(ip, n - 1);
+  });
+
+  // ... rest of the connection handling
+});
+```
+
+For user-facing feedback, you can send a banner before closing:
+
+```typescript
+if (count >= MAX_PER_IP) {
+  client.on('authentication', (ctx) => {
+    ctx.reject(['password'], true);
+  });
+  // or just:
+  client.end();
+}
+```
+
+## How it's used
+
+- **Cairn** — `MAX_PER_IP = 5` on the portfolio SSH server
+- **Pattern generalizes** to any low-traffic TCP server with a few dozen concurrent slots
+
+## Gotchas
+
+- **The IP you see may be a NAT gateway.** A whole corporate network appearing as one IP will hit the limit under normal use. If your audience includes offices, bump the limit or key on a different attribute.
+- **IPv6 is per-/64, not per-address.** A single host can have many IPv6 addresses. Some SSH servers mitigate by masking to /64 when keying the map. For IPv4-mostly traffic, plain IP is fine.
+- **In-memory state is lost on restart.** Not a real problem for this pattern — at restart, no connections are active, so the counters should be empty anyway.
+- **Doesn't survive worker reloads.** If you run multiple SSH server workers (rare), each has its own counter and the limit is effectively multiplied. Single-worker is the norm here.
+- **Reconnect storms.** A client with a bad reconnect loop hits the limit and tries again in a tight loop. Add a brief blacklist for repeated rejects — 30 seconds of silence after 5 rejected tries cuts most noise.
+- **Localhost connections for testing.** `127.0.0.1` will hit the limit during development. Exempt localhost or bump its cap in dev.
+- **Shared cloud IPs.** If you host on a cloud provider, the incoming IP may be a load balancer. The real client IP is in a header / proxy-protocol envelope, and you need to unwrap it before keying.
+- **Counting vs. rate limiting.** This caps *concurrency*. Separate concern: rate of new connections per minute. Add that with a sliding-window counter if brute-force login attempts are a problem.
+
+## See also
+
+- [patterns/ink-over-ssh](../ink-over-ssh/) — the SSH server this sits in front of
+- [patterns/ssh-idle-timeout](../ssh-idle-timeout/) — complementary; ensures slots free up
+- [patterns/rate-limit-per-endpoint](../rate-limit-per-endpoint/) — HTTP equivalent

@@ -1,0 +1,77 @@
+---
+title: Gradient title
+description: Per-character HSL hue cycling. Each glyph gets its own hue, offset from its neighbors.
+---
+
+import GradientTitle from '../../../examples/gradient-title.tsx';
+
+> **Source:** [kaleidoscope/src/demos/gradient-text.tsx](https://github.com/RogerSquare/kaleidoscope) (Ink) · [cairn](https://github.com/RogerSquare/cairn) web adaptation
+> **Category:** Animation
+
+**Gradient title** — a heading where each character has a slightly different hue, and the whole sequence cycles over time. Slow enough to feel ambient, fast enough to be visibly alive.
+
+## What it is
+
+`requestAnimationFrame` ticks a single time variable `t` in the component state. Each character renders with `hsl((t + charIndex * offset) % 360, sat, light)`. Offset per character is small — 8 degrees is a good starting point — so neighbors blend smoothly.
+
+## Why it exists
+
+Static gradients go stale; cycling gradients draw attention without effort. Terminal version (Kaleidoscope) uses ANSI `\x1b[38;2;r;g;b` to color each glyph; the web version uses HSL strings. Same idea.
+
+## Live
+
+<GradientTitle client:load />
+
+## Implementation
+
+```jsx
+function GradientTitle({ text, speed = 30 }) {
+  const [t, setT] = useState(0);
+
+  useEffect(() => {
+    let last = performance.now();
+    const tick = (now) => {
+      const dt = (now - last) / 1000;
+      last = now;
+      setT(prev => (prev + speed * dt) % 360);
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }, [speed]);
+
+  return (
+    <h1>
+      {[...text].map((ch, i) => (
+        <span key={i} style={{
+          color: `hsl(${(t + i * 8) % 360}, 70%, 65%)`,
+        }}>{ch}</span>
+      ))}
+    </h1>
+  );
+}
+```
+
+Remember to clean up the RAF on unmount.
+
+## How it's used
+
+- **Kaleidoscope** — a dedicated demo teaching the technique in the terminal
+- **Cairn (web)** — the hero heading on `r-that.com`
+- **Pattern generalizes** — any title, logo, or accent text where you want motion without swapping typography
+
+## Gotchas
+
+- **Use `requestAnimationFrame`, not `setInterval`.** RAF syncs with the display; interval drifts and causes judder.
+- **Clean up on unmount.** Store the handle from `requestAnimationFrame`, cancel in the cleanup. Without it, the animation keeps running against an unmounted component.
+- **Per-character `<span>` costs.** A 30-character title with re-colors every frame is 1800 style updates per second. Fine for a heading; bad for a paragraph. Scope this to short strings.
+- **`[...text]` handles emoji correctly.** `text.split('')` splits surrogate pairs and breaks emoji; spreading the string uses the iterator which respects code points.
+- **HSL is easier to tune than RGB.** Keep saturation and lightness fixed; cycle only hue. You'll get predictable results.
+- **Lightness / background contrast.** `hsl(..., 70%, 65%)` reads well on dark backgrounds; on light ones bump down lightness and/or saturation.
+- **Respect `prefers-reduced-motion`.** Show the first frame statically if the user has set this.
+- **Color-blindness.** Pure hue cycling is fine for decoration but don't rely on specific colors carrying meaning. Color here is art, not information.
+
+## See also
+
+- [components/streaming-text](../streaming-text/) — Kaleidoscope's other animation primitive
+- [projects/kaleidoscope](../../projects/kaleidoscope/)
+- [projects/cairn](../../projects/cairn/)

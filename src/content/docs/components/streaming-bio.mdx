@@ -1,0 +1,78 @@
+---
+title: Streaming bio
+description: Longer-form typewriter reveal with pacing variation at punctuation. The web companion to Kaleidoscope's streaming-text.
+---
+
+import StreamingBio from '../../../examples/streaming-bio.tsx';
+
+> **Source:** [cairn/ts/src/sections/About.tsx](https://github.com/RogerSquare/cairn) — Ink version · web port in `web-server.ts`
+> **Category:** Animation
+
+**Streaming bio** — a typewriter effect tuned for readable prose. Where [streaming-text](../streaming-text/) is the primitive, this adds **pacing variation**: slower after periods and em dashes, slightly slower after commas and semicolons. Small detail; makes the reveal feel less mechanical.
+
+## What it is
+
+A character-by-character reveal with per-character delay derived from the character just revealed. Periods and em dashes add ~150ms; commas add ~60ms; everything else runs at the base character-per-second rate. The cursor blinks until the last character lands.
+
+## Why it exists
+
+A fast uniform reveal feels like spam; a slow uniform reveal feels robotic. Human reading rhythm slows at punctuation — matching that rhythm makes a purely visual effect feel a little alive. The code cost is two `if` statements.
+
+## Live
+
+<StreamingBio client:load />
+
+## Implementation
+
+```jsx
+function StreamingBio({ text, cps = 55 }) {
+  const [revealed, setRevealed] = useState('');
+  const idxRef = useRef(0);
+
+  useEffect(() => {
+    idxRef.current = 0;
+    setRevealed('');
+
+    const tick = () => {
+      const i = idxRef.current;
+      if (i >= text.length) return;
+      idxRef.current += 1;
+      setRevealed(text.slice(0, idxRef.current));
+
+      const ch = text[i];
+      let delay = 1000 / cps;
+      if (ch === '.' || ch === '—') delay += 150;
+      else if (ch === ',' || ch === ';') delay += 60;
+
+      setTimeout(tick, delay);
+    };
+
+    const id = setTimeout(tick, 200);
+    return () => clearTimeout(id);
+  }, [text, cps]);
+
+  return <>{revealed}{!done && <BlinkingCaret />}</>;
+}
+```
+
+## How it's used
+
+- **Cairn (SSH)** — About section reveals the bio over ~8 seconds on connect
+- **Cairn (web)** — same on the landing page, ported from Ink to React
+- **Pattern generalizes** to any long-form reveal: chat onboarding, terminal boot sequences, LLM response-style animations
+
+## Gotchas
+
+- **Nested `setTimeout`, not `setInterval`.** Interval fires on a fixed cadence; we want per-character pacing. Chain timeouts instead.
+- **Clean up on unmount.** Store the timer id and clear it in the effect cleanup, or the reveal continues on an unmounted component and you get a React warning.
+- **Punctuation dwell isn't linguistic.** "Dr. Smith" pauses at the period like an end-of-sentence. For English-only UI it's fine. For fancy typography, consider sentence boundary detection.
+- **Font substitution breaks layout mid-reveal.** If the font loads late, the text reflow during reveal looks weird. Preload the font or accept the flash.
+- **Skip button.** For accessibility and impatience, offer a tap-anywhere "skip" that jumps to the final text.
+- **`prefers-reduced-motion`.** Users who've set it see the final text immediately, no animation.
+- **Cursor height mismatch.** The blinking cursor has to match the line-height and font size exactly, or it looks off-center. `1.1em` and `text-bottom` tend to work; `1em` with `baseline` does not.
+
+## See also
+
+- [components/streaming-text](../streaming-text/) — the simpler primitive this extends
+- [projects/cairn](../../projects/cairn/)
+- [projects/kaleidoscope](../../projects/kaleidoscope/) — terminal-native originals

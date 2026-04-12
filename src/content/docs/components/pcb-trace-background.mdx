@@ -1,0 +1,81 @@
+---
+title: PCB trace background
+description: Animated SVG of "circuit board traces" drawing themselves in. Barely-noticeable backdrop.
+---
+
+import PCBTraceBackground from '../../../examples/pcb-trace-background.tsx';
+
+> **Source:** [cairn/ts/src/web-server.ts](https://github.com/RogerSquare/cairn/blob/main/ts/src/web-server.ts) — hero backdrop
+> **Category:** Decorative component
+
+**PCB trace background** — an animated SVG of orthogonal line segments (horizontal + vertical), each drawing itself in over a couple of seconds, with small circle "pads" at the endpoints. Decorative backdrop for the hero section; tech-adjacent without being loud.
+
+## What it is
+
+Generate N random axis-aligned line segments inside a viewport. Render each as an `<svg> <line>` with `stroke-dasharray` = length and `stroke-dashoffset` animating from length to 0 — the classic "stroke reveal" trick. Pads fade in after each trace completes.
+
+## Why it exists
+
+The r-that.com hero was either **too loud** (animated gradient meshes, particle systems — distracting) or **too empty** (flat dark canvas — boring). The PCB-trace idea split the difference: technical, animated, but low-contrast enough you barely notice it unless you look.
+
+## Live
+
+<div style={{ padding: 16, background: '#020617', borderRadius: 8, display: 'flex', justifyContent: 'center' }}>
+  <PCBTraceBackground client:load />
+</div>
+
+Reload the page — the traces are randomly generated each mount.
+
+## Implementation sketch
+
+```jsx
+function generateTraces(width, height, count) {
+  const traces = [];
+  for (let i = 0; i < count; i++) {
+    const horizontal = Math.random() > 0.5;
+    if (horizontal) {
+      const y = Math.floor(Math.random() * (height / 20)) * 20;    // snap to 20px grid
+      const x1 = Math.random() * width * 0.2;
+      const x2 = x1 + 100 + Math.random() * (width * 0.6);
+      traces.push({ x1, y1: y, x2, y2: y, delay: i * 0.2 });
+    } else {
+      // vertical
+    }
+  }
+  return traces;
+}
+
+// Each line:
+<line
+  x1={t.x1} y1={t.y1} x2={t.x2} y2={t.y2}
+  stroke="rgba(96, 165, 250, 0.28)" stroke-width="1.5"
+  stroke-dasharray={len} stroke-dashoffset={len}
+  style={{ animation: `trace-draw 2.2s ${t.delay}s ease-out forwards` }}
+/>
+```
+
+CSS keyframe:
+
+```css
+@keyframes trace-draw { to { stroke-dashoffset: 0; } }
+```
+
+## How it's used
+
+- **Cairn** — backdrop for the hero section on `r-that.com`
+- **Pattern generalizes** to any tech-themed site wanting a subtle animated backdrop
+
+## Gotchas
+
+- **Orthogonal, not diagonal.** Random-angle lines look like scratches; axis-aligned lines look like circuit traces. Snap to a grid (every 20px) to reinforce the illusion.
+- **Low contrast is a feature.** Too-bright traces dominate the page; users fixate on the animation instead of the content. `rgba(..., 0.28)` or similar.
+- **Animate on mount, not continuously.** The traces draw in once over a few seconds and then stop. A looping animation would be exhausting for readers.
+- **Pads are the secret sauce.** Without the circles at each endpoint, it looks like random lines. With them, the "circuit board" association snaps into place.
+- **`prefers-reduced-motion`.** Respect it — users who've set this should see the final state instantly with no animation. `@media (prefers-reduced-motion: reduce)` to zero-out the delays.
+- **Viewport-size regeneration.** On resize, the old traces don't fit. Either ignore (regenerate only on mount) or debounce-regenerate. Ignoring is simpler.
+- **Don't block page content.** Background has `pointer-events: none` so clicks pass through to the actual UI underneath.
+
+## See also
+
+- [projects/cairn](../../projects/cairn/) — where this lives
+- [components/gradient-title](../gradient-title/) — another "decorative but tech-flavored" piece

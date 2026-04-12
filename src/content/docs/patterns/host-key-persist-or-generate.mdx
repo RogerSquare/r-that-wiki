@@ -1,0 +1,76 @@
+---
+title: Host key — persist or generate
+description: Generate on first run, persist forever. Don't let a fresh deploy scare visitors with a MITM warning.
+---
+
+> **Source:** [cairn/ts/src/ssh-server.tsx](https://github.com/RogerSquare/cairn/blob/main/ts/src/ssh-server.tsx)
+> **Category:** Pattern — SSH / deployment
+
+**Host key persist-or-generate** — on first boot, generate an SSH host key and write it to disk. On every subsequent boot, read the existing key. Never re-generate. Persisting the key is what lets returning visitors connect without their SSH client freaking out.
+
+## What it is
+
+One file (`host_key`, gitignored). A startup function that reads it if present, runs `ssh-keygen` once if not. The key is a long-lived server identity — the same value across restarts, deploys, rebuilds.
+
+## Why it exists
+
+**The problem:** SSH clients cache the server's host key on first connect. If the key changes, the client refuses to connect with a loud "REMOTE HOST IDENTIFICATION HAS CHANGED" warning. Users either panic or have to manually edit `~/.ssh/known_hosts`.
+
+Regenerating the host key on every boot (a common mistake) means every visitor after the first gets that warning — indistinguishable from an actual MITM attack. Embedded in the Docker image, it's leaked in the image layer. Committed to git, same problem. The right model: **generate once on the production box, persist forever**.
+
+## Shape
+
+```typescript
+import { existsSync, readFileSync, writeFileSync, unlinkSync } from 'fs';
+import { execSync } from 'child_process';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const HOST_KEY_PATH = join(__dirname, '..', 'host_key');
+
+function loadOrGenerateHostKey(): string {
+  if (existsSync(HOST_KEY_PATH)) {
+    return readFileSync(HOST_KEY_PATH, 'utf8');
+  }
+
+  // First-run generation
+  execSync(`ssh-keygen -t ed25519 -f "${HOST_KEY_PATH}" -N "" -q`);
+  try { unlinkSync(`${HOST_KEY_PATH}.pub`); } catch {}   // public half not needed
+  console.log(`[ssh] generated new host key at ${HOST_KEY_PATH}`);
+
+  return readFileSync(HOST_KEY_PATH, 'utf8');
+}
+
+const hostKey = loadOrGenerateHostKey();
+const server = new Server({ hostKeys: [hostKey] }, /* ... */);
+```
+
+Gitignore the file:
+
+```gitignore
+# .gitignore
+host_key
+```
+
+## How it's used
+
+- **Cairn** — portfolio SSH server generates once on first boot on the VPS, reads thereafter
+- **Pattern generalizes** to any persistent server identity (TLS cert in dev, JWT keys, signing keys)
+
+## Gotchas
+
+- **Do not commit the key.** A host key in git is a server identity every forker can impersonate. `.gitignore` it. If you accidentally commit, treat it as compromised: delete, regenerate, accept the one-time visitor pain.
+- **Do not bake into a Docker image.** Same problem — every `docker pull` of that image uses the same key. Mount a volume so the key persists outside the image.
+- **Permissions matter.** `chmod 600 host_key`. World-readable private keys are a real problem on shared hosts.
+- **This is *different* from the SSH server seeding pattern for data.** You want [cairn-data-dir](../cairn-data-dir/)-style seeding for user-editable content. You do **not** want seeding for host keys — seeding means shipping a default key, which defeats the purpose.
+- **ed25519 is the right choice.** RSA works too but keys are bigger and slower; ed25519 is small, fast, secure by modern standards.
+- **Multiple key types.** OpenSSH traditionally uses multiple host keys (rsa, ecdsa, ed25519). `ssh2` accepts an array of keys — load whatever you generated. For a simple portfolio one ed25519 is fine.
+- **Rotation is manual.** If you ever need to rotate — compromise, paranoia — delete the file, restart, accept the one-time warning wave. There's no automatic rotation because any rotation causes client warnings.
+- **Backup the file.** If you lose it (server reimage, wiped disk), every returning visitor gets the MITM warning. Back `host_key` up alongside your data — it's a server identity, not data, but the operational consequence is similar.
+
+## See also
+
+- [patterns/ink-over-ssh](../ink-over-ssh/) — the server that needs this key
+- [patterns/cairn-data-dir](../cairn-data-dir/) — sibling "persist server state outside the repo" pattern
+- [patterns/jwt-secret-persist-or-generate](../jwt-secret-persist-or-generate/) — analogous pattern for JWT signing secrets

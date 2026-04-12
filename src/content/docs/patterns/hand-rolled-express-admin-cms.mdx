@@ -1,0 +1,119 @@
+---
+title: Hand-rolled Express admin CMS
+description: Auth middleware + CSRF + templated forms + one directory of routes. No Next.js, no Remix, no Payload.
+---
+
+> **Source:** [cairn/ts/src/web-server.ts](https://github.com/RogerSquare/cairn/blob/main/ts/src/web-server.ts) (`/admin/*`)
+> **Category:** Pattern — CMS
+
+**Hand-rolled Express admin CMS** — when a single-user content system is simpler than any framework can make it. A few hundred lines of Express: auth middleware, CSRF guard, a form-rendering helper, and one route per content type. No database, no ORM, no JSX — just HTML strings and filesystem writes.
+
+## What it is
+
+For each content type (posts, projects, skills, about-section), three routes: `GET /admin/<type>` (list), `GET /admin/<type>/edit/:id` (form), `POST /admin/<type>/edit/:id` (save). All writes go to the same `data.json` or a markdown file in a directory. Auth is a session cookie after a password login. CSRF is a double-submit cookie.
+
+## Why it exists
+
+**The problem:** Content-managed portfolios have two poor options:
+
+1. **Strapi / Payload / Wordpress / Ghost** — full CMS, bigger than the site itself, deployment complexity that outweighs the "just edit some text" requirement
+2. **Edit markdown files in your editor, push to deploy** — works, but has friction (SSH in, run git, rebuild) and won't work from a phone
+
+**The fix:** a half-screen of admin HTML per content type. One `requireAdmin` middleware. One `csrfField()` helper in the form template. Writes go straight to disk. Deployment is the same as deploying the rest of the site.
+
+## Shape
+
+```ts
+// Middleware
+function requireAdmin(req, res, next) {
+  if (req.session?.isAdmin) return next();
+  res.redirect('/admin/login');
+}
+
+function csrfField(req) {
+  return `<input type="hidden" name="_csrf" value="${req.cookies.csrf}">`;
+}
+
+// Layout helper wraps every admin page
+function adminLayout(title, body) {
+  return `<!DOCTYPE html><html><head>
+    <title>${esc(title)}</title>
+    <link rel="stylesheet" href="/admin.css">
+  </head><body>
+    <nav>${adminNav(title)}</nav>
+    <main>${body}</main>
+  </body></html>`;
+}
+
+// One content type = three routes
+app.get('/admin/projects', requireAdmin, (_req, res) => {
+  const data = getData();
+  res.send(adminLayout('Projects', `
+    <h2>Projects</h2>
+    <a class="btn btn-primary" href="/admin/projects/new">Add project</a>
+    <ul>${data.projects.map((p, i) => `
+      <li>${esc(p.name)}
+        <a class="btn" href="/admin/projects/edit/${i}">Edit</a>
+        <form method="POST" action="/admin/projects/delete/${i}" style="display:inline">
+          ${csrfField(_req)}
+          <button class="btn btn-danger" onclick="return confirm('Delete?')">Delete</button>
+        </form>
+      </li>`).join('')}
+    </ul>
+  `));
+});
+
+app.get('/admin/projects/edit/:idx', requireAdmin, (req, res) => {
+  const data = getData();
+  const idx = safeIdx(req.params.idx, data.projects);
+  if (idx < 0) return res.redirect('/admin/projects');
+  const p = data.projects[idx];
+  res.send(adminLayout('Edit', `
+    <form method="POST" action="/admin/projects/edit/${req.params.idx}">
+      ${csrfField(req)}
+      <label>Name</label> <input type="text" name="name" value="${esc(p.name)}" required>
+      <label>Link</label> <input type="text" name="link" value="${esc(p.link)}">
+      <label>Description</label> <textarea name="desc">${esc(p.desc)}</textarea>
+      <button type="submit">Save</button>
+    </form>
+  `));
+});
+
+app.post('/admin/projects/edit/:idx', requireAdmin, (req, res) => {
+  const data = getData();
+  const i = safeIdx(req.params.idx, data.projects);
+  if (i < 0) return res.redirect('/admin/projects');
+  data.projects[i] = {
+    name: b(req, 'name'),
+    link: normalizeLink(b(req, 'link')),
+    desc: b(req, 'desc'),
+    tech: b(req, 'tech').split(',').map(s => s.trim()).filter(Boolean),
+  };
+  saveData(data);
+  res.redirect('/admin/projects?msg=saved');
+});
+```
+
+`esc()` HTML-escapes user input for safe template interpolation; `b(req, name)` pulls a trimmed string from the form body.
+
+## How it's used
+
+- **Cairn** — the entire `/admin/*` surface for editing bio, skills, projects, experience, blog posts
+- **Pattern generalizes** to any single-editor site where a full CMS would be overkill
+
+## Gotchas
+
+- **HTML template string escape discipline is non-negotiable.** One unescaped user string in the template = stored XSS. Wrap every interpolation in `esc()`, no exceptions. Keep `esc()` in one file, use it everywhere.
+- **`safeIdx(req.params.idx, arr)`** — validate the index before reading it. `data.projects[NaN]` is `undefined`; `data.projects[-1]` is `undefined`; but `data.projects[999]` is also `undefined`, and your code has to decide whether that's a 404 or a 400.
+- **CSRF goes on every mutating form.** Forgetting it on one "delete" button defeats the whole defense. See [csrf-for-hand-rolled-admin](../csrf-for-hand-rolled-admin/).
+- **Session management adds back some complexity.** The "no framework" claim is weakest on sessions — you need something (cookie-session, express-session) and have to pick a store. Cookie-session is simplest; server-side stores are safer for larger user counts.
+- **File writes aren't atomic on Windows.** `fs.writeFileSync` can leave a partial file if the process dies mid-write. For valuable data, write to a temp file then rename (atomic on both POSIX and Windows NTFS).
+- **Pagination is manual.** No ORM means `LIMIT` / `OFFSET` become `.slice(offset, offset + limit)`. Fine at hundreds of rows; stop being clever if you get to thousands.
+- **Admin UI vs public UI styles drift.** Different CSS files for admin and public prevent public tokens leaking into the admin chrome. Pay the duplication cost; the admin UI rarely needs to match.
+- **Error pages.** `res.redirect('/admin/projects?msg=error')` is the minimal "status message on next page" — the list template reads the `msg` param and shows a banner. Poor man's flash messages.
+
+## See also
+
+- [patterns/csrf-for-hand-rolled-admin](../csrf-for-hand-rolled-admin/) — the CSRF middleware this depends on
+- [patterns/cairn-data-dir](../cairn-data-dir/) — where the admin writes actually go
+- [components/admin-form-post](../../components/admin-form-post/) — the repeated form shape across content types

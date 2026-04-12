@@ -1,0 +1,71 @@
+---
+title: SSH idle timeout
+description: Close connections that haven't sent anything in 10 minutes. Stops slot exhaustion from stuck clients.
+---
+
+> **Source:** [cairn/ts/src/ssh-server.tsx](https://github.com/RogerSquare/cairn/blob/main/ts/src/ssh-server.tsx)
+> **Category:** Pattern — networking
+
+**SSH idle timeout** — track the last time a client sent a byte. If it's been longer than the timeout, close the connection. Prevents stuck tabs and dead clients from holding your connection slots forever.
+
+## What it is
+
+Per connection: a timestamp of the last received byte, a timer that checks it periodically, a close on timeout. Every incoming data event updates the timestamp. Simple reset-on-activity pattern.
+
+## Why it exists
+
+**The problem:** SSH connections don't self-close. A visitor opens the portfolio, gets distracted, closes their laptop lid. The TCP connection hangs because no FIN was ever sent. Your server counts it as active. Over a day, stuck connections accumulate and take up your [per-IP slots](../per-ip-ssh-connection-limit/) and your global slot count.
+
+**The fix:** track activity, close on silence. 10 minutes is a comfortable default — long enough that an actual user reading the portfolio won't be interrupted, short enough that abandoned tabs don't linger for hours.
+
+## Shape
+
+```typescript
+const IDLE_TIMEOUT_MS = 10 * 60 * 1000;
+
+client.on('session', (accept) => {
+  const session = accept();
+  let lastActivity = Date.now();
+
+  const idleCheck = setInterval(() => {
+    if (Date.now() - lastActivity > IDLE_TIMEOUT_MS) {
+      console.log('[ssh] closing idle connection');
+      client.end();
+    }
+  }, 60 * 1000);
+
+  session.on('shell', (accept) => {
+    const channel = accept();
+
+    channel.on('data', () => { lastActivity = Date.now(); });
+
+    channel.on('close', () => {
+      clearInterval(idleCheck);
+    });
+  });
+
+  client.on('close', () => clearInterval(idleCheck));
+});
+```
+
+The `setInterval` runs every 60s, not every second — the granularity doesn't matter (a 60s difference in when we close doesn't matter to anyone). The activity reset runs on every keystroke.
+
+## How it's used
+
+- **Cairn** — `IDLE_TIMEOUT_MS = 10 * 60 * 1000` on the portfolio SSH server
+- **Pattern generalizes** to any long-lived TCP connection where you want to garbage-collect abandoned sessions
+
+## Gotchas
+
+- **Clear the interval on close.** Both client.close *and* session/channel close paths need to clear the timer — otherwise you leak intervals for every disconnected client. Eventually the event loop is overwhelmed.
+- **Activity isn't the same as user-present.** If the client is sending keepalives (some terminals do), lastActivity stays fresh and the user may still have closed their laptop hours ago. Cap total session length separately if you care.
+- **Don't close without a banner.** The visitor sees the session die with no explanation. Emit a "disconnected due to inactivity" message before calling `end()`.
+- **TCP keepalives are different.** OS-level keepalives detect *broken* connections; idle timeout catches *unused* connections. Use both if reliability matters — keepalives (`socket.setKeepAlive(true, 60_000)`) close half-open TCP connections the OS knows are dead.
+- **Check interval granularity.** Every second is wasteful and every hour is too loose. Every minute is usually right.
+- **Reset on *sent* data, not just received.** If your server streams updates (animations, refreshes), those shouldn't count as activity from the client. Only count incoming keystrokes/data.
+- **What "activity" means for `window-change`.** Terminal resize events are a bit liminal — is the user still there if they just resized the window? Opinion: yes, count it.
+
+## See also
+
+- [patterns/per-ip-ssh-connection-limit](../per-ip-ssh-connection-limit/) — pairs well; together they handle "stuck" and "greedy" clients
+- [patterns/ink-over-ssh](../ink-over-ssh/) — the SSH rendering layer this protects

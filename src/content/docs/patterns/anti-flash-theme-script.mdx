@@ -1,0 +1,80 @@
+---
+title: Anti-flash theme script
+description: Set light/dark before the page paints. One inline script in `<head>`, no FOUC.
+---
+
+> **Source:** [cairn/ts/src/web-server.ts](https://github.com/RogerSquare/cairn/blob/main/ts/src/web-server.ts) — layout head template
+> **Category:** Pattern — frontend UX
+
+**Anti-flash theme script** — the single most effective dark-mode implementation detail. A tiny synchronous script in `<head>` reads the user's stored preference (or OS setting) and sets a class on `<html>` *before* the body renders. No flash of wrong theme, no flicker on navigation.
+
+## What it is
+
+Four lines of inline JavaScript, placed in `<head>` *before* any CSS that styles based on the theme class. Reads localStorage, reads `prefers-color-scheme`, sets `document.documentElement.className`. Runs synchronously, so by the time the browser parses `<body>`, the class is already there.
+
+## Why it exists
+
+**The problem:** The classic dark-mode bug:
+
+1. Page loads with default theme (often light)
+2. React mounts, reads localStorage, finds "user prefers dark"
+3. React applies the dark class
+4. User sees a bright flash before the darkness hits
+
+The "flash of unstyled content" experience that ships in countless sites. On mobile it's especially jarring — OLED screens make the jump violent.
+
+**The fix:** do the theme resolution *before* React, *before* CSS, *before* anything paints. The only way that's synchronous enough is an inline `<script>` in `<head>`.
+
+## The script
+
+```html
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script>
+    (function() {
+      try {
+        var saved = localStorage.getItem('theme');
+        var prefersLight = window.matchMedia('(prefers-color-scheme: light)').matches;
+        var theme = saved || (prefersLight ? 'light' : 'dark');
+        document.documentElement.className = theme;
+      } catch (e) {
+        document.documentElement.className = 'dark';
+      }
+    })();
+  </script>
+  <link rel="stylesheet" href="/styles.css">
+  ...
+</head>
+```
+
+Then in CSS:
+
+```css
+:root { --bg: #0a0a0a; --text: #e8e8e8; }
+.light { --bg: #ffffff; --text: #171717; }
+body { background: var(--bg); color: var(--text); }
+```
+
+## How it's used
+
+- **Cairn** — this exact snippet in `layout()` inside `web-server.ts`
+- **Pattern generalizes** to any server-rendered site (or any static site with a build-time HTML template) that supports light/dark
+
+## Gotchas
+
+- **Must be synchronous.** `<script async>` or `<script defer>` defeats the purpose — those wait for body parsing. Plain `<script>` blocks rendering, which is exactly what you want here.
+- **Must be inline.** An external `<script src="...">` introduces a roundtrip latency during which the page has no class. Inline it.
+- **Must come before any CSS that styles based on the class.** Otherwise the default CSS renders first, and you flash again.
+- **Wrap in try/catch.** `localStorage` can throw (private browsing mode, disabled cookies). Fall back to a sensible default.
+- **No dependencies.** This runs before any framework code, any modules, anything. Plain vanilla JS only.
+- **Keep it short.** Shipped in every response. Every byte matters (marginally). The version above is ~200 bytes.
+- **Ship the `class` attribute on `<html>`, not `<body>`.** `<html>` is available to the CSS cascade before `<body>` exists in the DOM. Setting it on `<html>` guarantees the style resolution for `<body>` itself already sees the correct theme.
+- **Theme switcher must also update `document.documentElement.className`, not just `<body>`.** Keep the attribute target consistent.
+- **No-JS users.** Users with JavaScript disabled see the default CSS (no class). Pick a default that works standalone; don't require the class to be set.
+
+## See also
+
+- [components/light-dark-toggle](../../components/light-dark-toggle/) — the UI that updates the preference
+- [projects/cairn](../../projects/cairn/) — where this ships
