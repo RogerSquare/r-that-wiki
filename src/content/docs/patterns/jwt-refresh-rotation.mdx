@@ -1,0 +1,92 @@
+---
+title: JWT refresh-token rotation
+description: Rotate the refresh token on every use. A stolen refresh token becomes useless the moment the legit client refreshes next.
+---
+
+> **Source:** [markstack](../../projects/markstack/) — `POST /auth/refresh`
+> **Category:** Pattern — authentication
+
+**JWT refresh rotation** — issue a short-lived access token and a long-lived refresh token. On refresh, invalidate the old refresh token and issue a new pair. Single-use refresh tokens mean theft is self-limiting.
+
+## What it is
+
+Two tokens per session. **Access** is short (minutes), sent on every API call. **Refresh** is long (days/weeks), sent only to `POST /auth/refresh`. Each refresh call:
+1. Verifies the incoming refresh token
+2. Marks it used (or deletes it from the DB)
+3. Issues a fresh access + refresh pair
+
+If an attacker steals a refresh token and uses it, the real user's next refresh fails (the token's already marked used) — which is a detectable signal that something's wrong.
+
+## Why it exists
+
+**The problem:** Plain JWT auth has a nasty trade-off:
+- **Long-lived tokens** are easy to steal and reuse for the whole lifetime
+- **Short-lived tokens** force re-login every N minutes — unacceptable UX
+- **Long-lived tokens with a revoke list** — you're now running a database for revocation, defeating stateless JWT
+
+**The fix:** short-lived access tokens (5-15 min) for API calls, long-lived refresh tokens (7-30 days) for obtaining new access tokens. Refresh tokens are stored server-side (or hashed in a DB); rotating them on each use detects theft and limits blast radius.
+
+## Shape
+
+Database table:
+
+```sql
+CREATE TABLE refresh_tokens (
+  token_hash  TEXT PRIMARY KEY,    -- hash, never the raw token
+  user_id     INTEGER NOT NULL,
+  expires_at  INTEGER NOT NULL,
+  used_at     INTEGER,              -- NULL until first use
+  replaced_by TEXT                  -- hash of the successor token
+);
+```
+
+Server handlers:
+
+```js
+// POST /auth/login — issue first pair
+app.post('/auth/login', async (req, res) => {
+  const user = await verify(req.body);
+  const access = signAccess(user);           // 15 min
+  const refresh = generateOpaque();           // 32 bytes random
+  await saveRefresh(hash(refresh), user.id, now() + DAYS(14));
+  res.json({ access, refresh });
+});
+
+// POST /auth/refresh — rotate
+app.post('/auth/refresh', async (req, res) => {
+  const row = await findByHash(hash(req.body.refresh));
+  if (!row) return res.sendStatus(401);
+  if (row.used_at) {
+    // Token reuse! Invalidate the whole family.
+    await invalidateUserSessions(row.user_id);
+    return res.sendStatus(401);
+  }
+  if (row.expires_at < now()) return res.sendStatus(401);
+
+  const newAccess = signAccess({ id: row.user_id });
+  const newRefresh = generateOpaque();
+  await markUsed(row.token_hash, hash(newRefresh));
+  await saveRefresh(hash(newRefresh), row.user_id, now() + DAYS(14));
+
+  res.json({ access: newAccess, refresh: newRefresh });
+});
+```
+
+## How it's used
+
+- **markstack** — `POST /auth/refresh` rotates; old tokens hashed in SQLite
+- **Pattern generalizes** — any stateless API where "stay logged in for weeks" is a requirement
+
+## Gotchas
+
+- **The refresh token itself should be opaque, not a JWT.** You're storing it server-side anyway; there's no benefit to self-verifying. Random 32 bytes + hash at rest.
+- **Hash refresh tokens at rest.** Never store the raw value in your DB. A DB dump is then useless for session hijacking.
+- **Detect reuse and nuke the session family.** If the same refresh token gets used twice, one of the users is an attacker. Delete all refresh tokens for that user and force re-login — noisy, but correct.
+- **Race conditions on rotation.** Two parallel requests with the same refresh token: one rotates, one sees `used_at` and fails. Design the client to serialize refresh attempts or accept the occasional re-login.
+- **Clock skew breaks expiry.** Server and client disagree on `now()` by a few seconds. Give refresh tokens a 5-minute grace window or accept the occasional legit failure right at expiry.
+- **Logout must invalidate server-side.** Deleting the client's cookie is not enough; the refresh token is still valid in your DB. Delete the row on logout.
+- **Refresh endpoint must be rate-limited.** Otherwise brute-forcing a token family is cheap. Per-IP or per-user-id limits both help.
+
+## See also
+
+- [projects/markstack](../../projects/markstack/) — running instance

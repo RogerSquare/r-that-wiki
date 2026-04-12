@@ -1,0 +1,96 @@
+---
+title: SQLite FTS5 full-text search
+description: Native full-text search inside your SQLite file. No Elasticsearch, no Meilisearch, no second daemon.
+---
+
+> **Source:** [Artifex](../../projects/artifex/) (image/tag search) · [markstack](../../projects/markstack/) (bookmark search)
+> **Category:** Pattern — search
+
+**SQLite FTS5** — a virtual-table module built into SQLite that indexes text columns for fast full-text queries. `MATCH` operator, BM25 ranking, phrase / prefix / boolean queries. All in the same file as your app data.
+
+## What it is
+
+You declare a virtual table over the columns you want searchable. SQLite builds and maintains the inverted index. Queries use `MATCH 'search terms'` and order by the built-in `rank` function (BM25). Triggers keep the index in sync with the real table.
+
+## Why it exists
+
+**The problem:** self-hosted apps hit the wall on `LIKE '%term%'` quickly — no relevance ranking, linear scan, no phrase matching. Alternatives:
+
+1. **Run Elasticsearch / Meilisearch / Typesense** — another daemon, another place for data to drift out of sync
+2. **Roll your own inverted index** — spend three weeks not shipping the actual app
+3. **Skip search, require users to scroll** — fine at 20 rows, unworkable at 2000
+
+**The fix:** FTS5. Ships inside every modern SQLite. No separate process. Adequate for most self-hosted apps up to millions of rows.
+
+## Shape
+
+Create the virtual table and set up sync triggers:
+
+```sql
+-- Real content table
+CREATE TABLE bookmarks (
+  id INTEGER PRIMARY KEY,
+  title TEXT, description TEXT, url TEXT,
+  created_at INTEGER
+);
+
+-- Virtual FTS table (indexes the text columns)
+CREATE VIRTUAL TABLE bookmarks_fts USING fts5(
+  title, description, url,
+  content='bookmarks',    -- external content; index references real rows
+  content_rowid='id',
+  tokenize='porter unicode61'
+);
+
+-- Triggers to keep the index in sync
+CREATE TRIGGER bookmarks_ai AFTER INSERT ON bookmarks BEGIN
+  INSERT INTO bookmarks_fts(rowid, title, description, url)
+  VALUES (new.id, new.title, new.description, new.url);
+END;
+
+CREATE TRIGGER bookmarks_ad AFTER DELETE ON bookmarks BEGIN
+  INSERT INTO bookmarks_fts(bookmarks_fts, rowid, title, description, url)
+  VALUES ('delete', old.id, old.title, old.description, old.url);
+END;
+
+CREATE TRIGGER bookmarks_au AFTER UPDATE ON bookmarks BEGIN
+  INSERT INTO bookmarks_fts(bookmarks_fts, rowid, title, description, url)
+  VALUES ('delete', old.id, old.title, old.description, old.url);
+  INSERT INTO bookmarks_fts(rowid, title, description, url)
+  VALUES (new.id, new.title, new.description, new.url);
+END;
+```
+
+Query with ranking:
+
+```sql
+SELECT b.*, bm25(bookmarks_fts) AS score
+FROM bookmarks_fts
+JOIN bookmarks b ON b.id = bookmarks_fts.rowid
+WHERE bookmarks_fts MATCH 'portfolio AND (react OR typescript)'
+ORDER BY score          -- lower score = better match
+LIMIT 50;
+```
+
+FTS5 query syntax supports: phrases `"exact phrase"`, prefix `term*`, boolean `AND` / `OR` / `NOT`, column-scoped `title:react`.
+
+## How it's used
+
+- **Artifex** — search across image tags, captions, filenames, prompts
+- **markstack** — search bookmarks by title, description, or URL
+- **Pattern generalizes** — any app where "search box" is a feature and data lives in SQLite
+
+## Gotchas
+
+- **Choose the tokenizer carefully.** `unicode61` handles accents and case folding; `porter` stems English (run → running); `trigram` is for fuzzy-ish prefix matching. Mixing modes is possible but rare.
+- **FTS5 is external-content by default in this pattern** (`content='bookmarks'`). Triggers are required; forget one and the index gets stale silently.
+- **Rebuilding the index is expensive.** For a one-time rebuild: `INSERT INTO bookmarks_fts(bookmarks_fts) VALUES('rebuild');`. On production, plan downtime or do it offline.
+- **Ranking is backwards.** `bm25()` returns smaller scores for better matches. `ORDER BY bm25(...) ASC`. Easy to flip by accident and get the worst matches first.
+- **Schema changes require re-creating the virtual table.** `ALTER TABLE` works on the content table, not on the FTS table. Drop + recreate + rebuild.
+- **Queries with special characters need escaping.** User-entered `"` or `*` can either be interpreted as FTS5 syntax or break the parse. Either sanitize or wrap the whole query in quotes to disable syntax parsing.
+- **No language-aware ranking out of the box.** BM25 treats terms as tokens; it doesn't know "running" ≈ "run" unless your tokenizer does stemming.
+
+## See also
+
+- [projects/artifex](../../projects/artifex/) · [projects/markstack](../../projects/markstack/)
+- [patterns/sqlite-job-queue](../sqlite-job-queue/) — sibling "use SQLite for the thing you'd normally reach for another service" pattern

@@ -1,0 +1,63 @@
+---
+title: Add env vars to a systemd unit via drop-in override
+description: Set `Environment=` without editing the base unit file. Survives package upgrades; doesn't mix with upstream config.
+---
+
+> **Source:** [Cairn](../../projects/cairn/) deploy — `CAIRN_DATA_DIR`, `WEB_PORT`
+> **Category:** Snippet — systemd
+
+**Systemd drop-in env var** — don't edit the upstream unit file. Drop a tiny `.conf` into `/etc/systemd/system/<service>.service.d/` with just the lines you want to add. `systemd daemon-reload` picks it up; everything else stays untouched.
+
+## What it is
+
+Every systemd unit has a sibling directory named `<unit>.service.d/`. Files in that directory are merged into the unit's configuration at load time. They override or extend specific settings without touching the base unit — which might live in `/lib/systemd/` and get overwritten by package upgrades.
+
+## Why it exists
+
+**The problem:** you need to add `Environment="CAIRN_DATA_DIR=/var/lib/cairn"` to a service. Options:
+
+1. **Edit `/lib/systemd/system/portfolio-web.service`** — gets clobbered on package upgrade.
+2. **`systemctl edit portfolio-web.service`** — opens an empty editor; save an empty file and nothing happens. Easy to accidentally save-with-no-content.
+3. **Drop a `.conf` file into `/etc/systemd/system/<unit>.d/`** — stable, explicit, scriptable.
+
+**The fix:** (3). Works every time, doesn't depend on editor behavior, easy to automate.
+
+## Commands
+
+```bash
+sudo mkdir -p /etc/systemd/system/portfolio-web.service.d
+
+sudo tee /etc/systemd/system/portfolio-web.service.d/cairn-data-dir.conf <<'EOF'
+[Service]
+Environment="CAIRN_DATA_DIR=/var/lib/cairn"
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl restart portfolio-web.service
+
+# Verify:
+systemctl cat portfolio-web.service | grep CAIRN_DATA_DIR
+```
+
+One drop-in per logical change (e.g. `cairn-data-dir.conf`, `port.conf`) — easier to diff, easier to remove.
+
+## How it's used
+
+- **Cairn on the VPS** — `CAIRN_DATA_DIR` drop-in on both `portfolio.service` and `portfolio-web.service`
+- **Wiki deploy** — moving `portfolio-web` from `:80` to `:3000` was a `WEB_PORT=3000` drop-in
+- **Pattern generalizes** — any service-management change that would otherwise mean editing the upstream unit
+
+## Gotchas
+
+- **`[Service]` header is required** at the top of each drop-in. Forgetting it makes systemd silently ignore the content.
+- **Multiple drop-ins are merged by filename order.** `10-foo.conf` then `20-bar.conf` — if two files set the same key, the later one wins. Prefix with numbers when order matters.
+- **`Environment=` is additive across drop-ins** for different variables, but *replacing* for the same variable. Two drop-ins both setting `PORT=` — the last one wins.
+- **`systemctl cat <unit>` shows the merged result** including all drop-ins. Use it to verify, especially after `daemon-reload`.
+- **`systemctl edit <unit>` is the "right" way** to create a drop-in from a UI standpoint — it opens an editor for `override.conf`. In practice, automation via `tee` is more reliable (no editor to save empty).
+- **`daemon-reload` is required** after any change. Restart the unit after reload for the change to actually take effect.
+- **Remove a drop-in by deleting the file and reloading.** No special command.
+
+## See also
+
+- [projects/cairn](../../projects/cairn/) — deployment uses this pattern
+- [patterns/cairn-data-dir](../../patterns/cairn-data-dir/) — the env var wired through these drop-ins

@@ -1,0 +1,80 @@
+---
+title: Socket.IO live-state fan-out
+description: Server mutates state, emits an event; every connected client reconciles its own view. No polling, no client-side subscriptions.
+---
+
+> **Source:** [Atrium](../../projects/atrium/) (task updates) · [dockview](../../projects/dockview/) (container state) · [Artifex](../../projects/artifex/) (upload progress)
+> **Category:** Pattern — realtime UI
+
+**Socket.IO live-state fan-out** — every state-changing request on the server emits a Socket.IO event to *all* connected clients. Clients listen, refetch (or merge the delta), and re-render. The server holds no per-client state.
+
+## What it is
+
+One-directional realtime. Server writes → server emits → clients receive → clients pull fresh data via normal REST. The socket is a nudge, not a transport for the data itself. Reconnection, retry, and data consistency all lean on the REST API being the source of truth.
+
+## Why it exists
+
+**The problem:** Keeping a UI fresh has ugly options:
+1. **Poll every N seconds** — wasteful, laggy, doesn't scale
+2. **Long-polling** — janky, timeout-sensitive
+3. **Full realtime data channel** — now the socket owns state and you're debugging two state machines (REST + socket) that disagree
+4. **No updates; user refreshes** — not acceptable for collaborative tools
+
+**The fix:** socket as a cache-invalidation signal. REST stays the data plane. The socket exists only to say "something changed." Clients refetch the scope of the change and reconcile.
+
+## Shape
+
+Server (Express + `socket.io`):
+
+```js
+const { Server } = require('socket.io');
+const io = new Server(httpServer, { cors: { origin: true } });
+
+// Hold the instance so routes can import it
+module.exports.getIO = () => io;
+
+// In a route:
+router.put('/:id', async (req, res) => {
+  await updateTask(req.params.id, req.body);
+  res.json({ success: true });
+  getIO().emit('task_updated', { id: req.params.id });
+});
+
+router.post('/', async (req, res) => {
+  const task = await createTask(req.body);
+  res.status(201).json(task);
+  getIO().emit('task_changed');
+});
+```
+
+Client (React + `socket.io-client`):
+
+```jsx
+useEffect(() => {
+  const socket = io(API_BASE);
+  socket.on('task_updated', ({ id }) => refetchTask(id));
+  socket.on('task_changed', () => refetchAll());
+  return () => socket.disconnect();
+}, []);
+```
+
+## How it's used
+
+- **Atrium** — task updates, project changes, service state changes fan out to every open board
+- **dockview** — container state transitions + system metrics push to every dashboard tab
+- **Artifex** — upload and ML-job progress events go to the uploader's UI
+- **Pattern generalizes** — any multi-tab or multi-user UI where stale views are annoying
+
+## Gotchas
+
+- **Authorize at `connection` time, not per-message.** Verify the token once on connect, disconnect on failure, emit freely after. Don't re-check on every emit; you'll pay for it on bursts.
+- **Room per user** if events are user-scoped. `socket.join(userId)` on connect; `io.to(userId).emit(...)` from routes. Otherwise every client sees every event.
+- **Emit after the HTTP response is sent.** Emit before `res.json(...)` and you can serve a stale body to the requesting client while their socket tells them it's fresh. Send response, then emit.
+- **Reconnection loses state.** When a client drops and reconnects, it may have missed events during the gap. Either refetch everything on reconnect, or include a `since=<timestamp>` parameter in the REST fetch so clients can catch up deltas.
+- **Message ordering isn't guaranteed in pathological cases.** Socket.IO serializes per-connection, but if two events race at the server (same resource, concurrent handlers), the last-write-wins order may differ from clients' perception. Treat events as "something changed" rather than "apply this diff."
+- **Event names are schema.** Renaming `task_updated` → `taskUpdated` is a breaking change for every deployed client. Version them or migrate gracefully.
+- **Don't ship state in the event.** It's tempting to send the whole updated task in the emit. Resist: it couples clients to a specific payload shape they also have to handle via REST. Keep the event minimal (an id, at most).
+
+## See also
+
+- [projects/atrium](../../projects/atrium/) · [projects/dockview](../../projects/dockview/) · [projects/artifex](../../projects/artifex/)

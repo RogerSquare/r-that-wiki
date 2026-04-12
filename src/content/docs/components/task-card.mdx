@@ -1,0 +1,103 @@
+---
+title: Task card
+description: Kanban-style card with status badge, priority dot, assignee, and tags.
+---
+
+import TaskCard from '../../../examples/task-card.tsx';
+
+> **Source:** [atrium/frontend/src/components/TaskCard.jsx](https://github.com/RogerSquare/atrium/blob/main/frontend/src/components/TaskCard.jsx)
+> **Category:** Composite component
+
+**Task card** — the building block of Atrium's kanban board. Renders a task's id, title, status, priority, tags, and assignee in a compact, scannable card. Four statuses map to four accent colors; priority is a dot on the left.
+
+## What it is
+
+A stateless presentation component. Accepts one `task` prop and renders a card. No drag-drop wiring, no data fetching, no auth awareness — those live in the parent (Board, Column, DragContext).
+
+## Why it exists
+
+A kanban column is just a list of cards. If the card design isn't consistent, the whole board becomes hard to scan. Extracting this component means:
+- Every column renders identical cards
+- Visual tweaks happen in one place
+- The drag-drop wrapper and the card itself are separate concerns (cards can be shown in non-drag contexts: search results, task modal previews, notifications)
+
+## Live
+
+<div style={{ padding: 24, background: '#0f172a', borderRadius: 8, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+  <TaskCard client:load task={{
+    id: 'feat-auth-001',
+    title: 'Implement JWT Login',
+    status: 'in_progress',
+    priority: 'high',
+    assignee: 'Agent-FE',
+    type: 'frontend',
+    tags: ['react', 'jwt'],
+  }} />
+  <TaskCard client:load task={{
+    id: 'bug-port-009',
+    title: 'Admin project link field rejects scheme-less URLs',
+    status: 'review',
+    priority: 'high',
+    type: 'backend',
+    tags: ['url', 'validation'],
+  }} />
+  <TaskCard client:load task={{
+    id: 'feat-port-043',
+    title: 'Make an Open Source Contribution to a Popular Project',
+    status: 'todo',
+    priority: 'medium',
+    tags: ['open-source'],
+  }} />
+</div>
+
+## Code
+
+```tsx
+const statusColor = {
+  todo: '#94a3b8', in_progress: '#3b82f6',
+  review: '#f59e0b', done: '#10b981',
+};
+const priorityDot = {
+  low: '#64748b', medium: '#f59e0b', high: '#ef4444',
+};
+
+export default function TaskCard({ task }) {
+  return (
+    <div className="card">
+      <div className="header">
+        <span className="priority-dot" style={{ background: priorityDot[task.priority] }} />
+        <span className="id">{task.id}</span>
+      </div>
+      <div className="title">{task.title}</div>
+      <div className="meta">
+        <Badge color={statusColor[task.status]}>{task.status.replace('_',' ')}</Badge>
+        {task.type && <Badge color="#a78bfa">{task.type}</Badge>}
+        {task.assignee && <span className="assignee">@{task.assignee}</span>}
+      </div>
+      {task.tags?.length > 0 && (
+        <div className="tags">{task.tags.map(t => <span>#{t}</span>)}</div>
+      )}
+    </div>
+  );
+}
+```
+
+Full simplified source at `src/examples/task-card.tsx` in this repo.
+
+## How it's used
+
+- **Atrium** — rendered in every column of the board, the list view, search results, and the task modal's "related tasks" area
+- **Pattern generalizes** to any status-grouped list view
+
+## Gotchas
+
+- **Status strings are load-bearing.** The backend enforces `todo | in_progress | review | done`; any other status disappears from the board. If you add a status, update both the type and the color map.
+- **Priority dot color conveys info without a label.** Color-blind users may miss it — pair with a `title` attribute (tooltip) as a fallback, as the example does.
+- **The real Atrium card wraps this in a drag-drop handle** (`@hello-pangea/dnd`). The card itself is drag-agnostic; the wrapper component handles dragHandleProps. Keep the separation — drag-drop shouldn't leak into the card's props.
+- **Card background assumes dark mode.** If your theme supports light mode, pull colors from CSS variables rather than hardcoding hex values as the wiki example does.
+- **No memo.** In a long list the card re-renders on every parent render. Real Atrium wraps it in `React.memo` with a shallow-equal comparison. Fine for a few dozen cards; necessary for hundreds.
+
+## See also
+
+- [projects/atrium](../../projects/atrium/) — where this card lives
+- [components/btn-icon](../btn-icon/) — the button primitive used in the task modal's toolbar

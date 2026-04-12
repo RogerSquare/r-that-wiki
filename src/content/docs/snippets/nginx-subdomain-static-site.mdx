@@ -1,0 +1,96 @@
+---
+title: nginx — serve a subdomain from /var/www
+description: Drop-in nginx site block that serves static files on a subdomain with Astro-friendly routing and aggressive cache headers on hashed assets.
+---
+
+> **Source:** wiki.r-that.com nginx config — [feat-wiki-deploy-001](../../projects/cairn/#deployment)
+> **Category:** Snippet — nginx
+
+**nginx subdomain static site** — one `server` block that serves a static build directory on a dedicated subdomain. Handles SPA-like URL patterns (`/components/btn-icon/` → `/components/btn-icon/index.html`) and aggressively caches hashed asset directories.
+
+## What it is
+
+A single nginx site config that:
+1. Listens on port 80 for the subdomain
+2. Serves from `/var/www/<site>`
+3. Resolves clean URLs to `index.html` files inside directories
+4. Caches `/_astro/` (or `/assets/`) with 1-year immutable headers
+5. Returns 404 from a branded page if you have one, or nginx default
+
+No TLS — Cloudflare handles it (see the Flexible SSL pattern when origin is HTTP-only).
+
+## Config
+
+`/etc/nginx/sites-available/<site>.com`:
+
+```nginx
+server {
+    listen 80;
+    listen [::]:80;
+    server_name wiki.r-that.com;
+
+    root /var/www/wiki;
+    index index.html;
+
+    # Clean-URL routing: /foo/bar → /foo/bar/index.html → 404
+    location / {
+        try_files $uri $uri/ $uri/index.html =404;
+    }
+
+    # Astro emits hashed filenames into /_astro/ — cache them forever
+    location /_astro/ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+    }
+}
+```
+
+Enable it:
+
+```bash
+sudo ln -sf /etc/nginx/sites-available/wiki.r-that.com \
+            /etc/nginx/sites-enabled/wiki.r-that.com
+sudo nginx -t                # validate
+sudo systemctl reload nginx  # apply
+```
+
+## Coexistence with an existing site
+
+If the same `server_name` context already has a root-domain proxy block (e.g. `r-that.com -> localhost:3000`), just add this subdomain block next to it in the same file or a sibling file. nginx matches by `server_name`; distinct subdomains get distinct blocks.
+
+```nginx
+# Root domain — proxy to a Node server
+server {
+    listen 80;
+    server_name r-that.com www.r-that.com;
+    location / { proxy_pass http://127.0.0.1:3000; ... }
+}
+
+# Subdomain — static files (this snippet)
+server {
+    listen 80;
+    server_name wiki.r-that.com;
+    root /var/www/wiki;
+    # ...
+}
+```
+
+## How it's used
+
+- **wiki.r-that.com** — serves the Astro build of `rog-wiki`
+- **Pattern generalizes** to any static-site-on-a-subdomain use case where you already have nginx running
+
+## Gotchas
+
+- **`try_files` order matters.** `$uri` before `$uri/` means files win over directories; handy if you have a file and a directory with the same name.
+- **`/_astro/` is Astro-specific.** For other build tools, swap the path: Vite emits `/assets/`, Next.js emits `/_next/static/`, etc.
+- **`Cache-Control: immutable`** is only safe if filenames genuinely change when content changes. Astro, Vite, Next all do content-hashed filenames by default — don't add immutable caching to a path that reuses filenames (e.g. `/images/`).
+- **`server_name` collisions** between enabled site files cause nginx to pick one (usually the first-loaded) and warn at startup. One site = one server_name set.
+- **Remove the default site.** Fresh nginx installs enable `/etc/nginx/sites-enabled/default` which catches everything. Delete the symlink to avoid accidental routing: `sudo rm /etc/nginx/sites-enabled/default`.
+- **Permissions.** `nginx` (the user) needs read on `/var/www/<site>` and execute on every ancestor directory. `chown -R www-data:www-data /var/www/<site>` covers most cases.
+- **Deploying updates.** Swap `dist/` atomically with `rsync -a --delete`. Don't delete then copy — even a short empty window will serve 404s.
+
+## See also
+
+- [projects/cairn](../../projects/cairn/#deployment) — where this subdomain lives next to the portfolio proxy
+- [snippets/systemd-drop-in-env-var](../systemd-drop-in-env-var/) — sibling infra snippet

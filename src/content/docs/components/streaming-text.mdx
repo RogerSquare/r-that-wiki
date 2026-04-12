@@ -1,0 +1,75 @@
+---
+title: Streaming text
+description: Character-by-character reveal that simulates LLM token streaming. Cursor blinks until the last character lands.
+---
+
+import StreamingText from '../../../examples/streaming-text.tsx';
+
+> **Source:** [kaleidoscope/src/demos/streaming-text.tsx](https://github.com/RogerSquare/kaleidoscope) — Ink (terminal) original
+> **Category:** Animation
+
+**Streaming text** — a typewriter effect that reveals a string one character at a time. Most commonly used to fake the feel of an LLM streaming tokens in a chat UI, but also handy for onboarding flows and terminal-style intros.
+
+## What it is
+
+A component with one state variable (characters revealed so far) and one interval. On mount, it starts revealing; when `revealed.length === text.length`, it fires `onDone` (optional) and stops. A blinking block-cursor trails the last revealed character until the animation completes.
+
+## Why it exists
+
+LLM chat UIs feel faster when tokens appear progressively, even if the full response arrives all at once. Kaleidoscope's terminal version is a reference implementation. Porting it to the browser is the same logic — only the rendering layer changes.
+
+## Live
+
+<div style={{ padding: 24, background: '#0f172a', color: '#e2e8f0', borderRadius: 8, fontSize: 14, minHeight: 80 }}>
+  <StreamingText client:load text="This text reveals one character at a time. The cursor blinks until the last character lands, then stops." speed={20} />
+</div>
+
+## Code
+
+```tsx
+export default function StreamingText({ text, speed = 18, onDone }) {
+  const [revealed, setRevealed] = useState('');
+  const idxRef = useRef(0);
+
+  useEffect(() => {
+    idxRef.current = 0;
+    setRevealed('');
+    const tick = () => {
+      if (idxRef.current >= text.length) { onDone?.(); return; }
+      idxRef.current += 1;
+      setRevealed(text.slice(0, idxRef.current));
+    };
+    const id = setInterval(tick, speed);
+    return () => clearInterval(id);
+  }, [text, speed, onDone]);
+
+  const done = revealed.length === text.length;
+  return (
+    <span>
+      {revealed}
+      {!done && <BlinkingCursor />}
+    </span>
+  );
+}
+```
+
+Full source at `src/examples/streaming-text.tsx`.
+
+## How it's used
+
+- **Kaleidoscope** — original Ink-based demo, terminal-first
+- **Pattern generalizes** to any "reveal over time" UI: chat, terminal boot sequences, dramatic splash screens
+
+## Gotchas
+
+- **`setInterval` drifts.** For anything over a minute, prefer `requestAnimationFrame` with timestamp-based pacing. For sub-minute effects, interval is fine.
+- **`useRef` for the index, not `useState`.** Using state causes a re-render per tick; with ref, the slice is the only thing that re-renders.
+- **Replay semantics.** Remount to replay, or expose a `key` prop. The effect's `[text, speed, onDone]` dependency handles text changes; same text + same component doesn't re-trigger.
+- **Long strings cost re-renders.** Each tick re-renders the entire string. For kilobyte-scale text, virtualize the output or only re-render the trailing chunk.
+- **Cursor position is approximate in proportional fonts.** The example uses `0.5ch` — looks right in monospace, wobbles in variable-width fonts. Match the parent's font, or wrap in `<code>`.
+- **`onDone` in the deps list is a footgun.** If the caller passes an inline arrow function, the effect re-runs on every parent render and resets the animation. Wrap `onDone` in `useCallback` or accept that it gets called from a specific render.
+
+## See also
+
+- [projects/kaleidoscope](../../projects/kaleidoscope/) — terminal-native original
+- [components/btn-icon](../btn-icon/) — sibling live-rendered UI primitive

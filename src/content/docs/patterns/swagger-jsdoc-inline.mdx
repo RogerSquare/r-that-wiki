@@ -1,0 +1,86 @@
+---
+title: OpenAPI docs inline with routes (swagger-jsdoc)
+description: Keep API docs in JSDoc comments above each route so edits to the endpoint and its docs happen in one file.
+---
+
+> **Source:** [Atrium](../../projects/atrium/) (`/api/docs`) · [markstack](../../projects/markstack/) (`/docs`)
+> **Category:** Pattern — API documentation
+
+**swagger-jsdoc inline** — write your OpenAPI spec as JSDoc `@swagger` comments *directly above each route handler*. A build step stitches them into a single spec; `swagger-ui-express` serves an interactive browser at `/docs` or similar.
+
+## What it is
+
+Every route gets an `@swagger` JSDoc block describing parameters, request body, responses, and tags. `swagger-jsdoc` scans your source files, extracts the YAML inside those comments, and merges them into an OpenAPI spec object. Serve the spec from one endpoint; serve the interactive UI from another.
+
+## Why it exists
+
+**The problem:** API docs decay. A separate OpenAPI YAML file drifts the moment someone adds a query param and forgets to update the spec. Swagger editors generate a starting point, but nobody keeps them in sync with the code.
+
+**The fix:** put the docs where the code is. Editing the route and editing the docs happen in the same file, ideally in the same diff hunk. Reviewers see both. Drift gets caught at review time, not by a consumer filing an issue.
+
+## Shape
+
+```js
+/**
+ * @swagger
+ * /api/tasks/{id}:
+ *   put:
+ *     summary: Update a task
+ *     tags: [Tasks]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               status: { type: string, enum: [todo, in_progress, review, done] }
+ *               assignee: { type: string }
+ *     responses:
+ *       200: { description: Updated task }
+ *       404: { description: Not found }
+ */
+router.put('/:id', (req, res) => { /* ... */ });
+```
+
+Wire it up once in `server.js`:
+
+```js
+const swaggerJsdoc = require('swagger-jsdoc');
+const swaggerUi = require('swagger-ui-express');
+
+const swaggerSpec = swaggerJsdoc({
+  definition: {
+    openapi: '3.0.3',
+    info: { title: 'My API', version: '1.0.0' },
+    servers: [{ url: 'http://localhost:3001' }],
+  },
+  apis: ['./routes/*.js', './lib/swagger.js'],  // scan these files
+});
+
+app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+app.get('/api/docs.json', (req, res) => res.json(swaggerSpec));
+```
+
+## How it's used
+
+- **Atrium** — `/api/docs` renders the interactive browser; reusable schemas (Task, Service, User) live in a dedicated `lib/swagger.js` file
+- **markstack** — API-first service where `/docs` *is* the primary interface for first-time users
+- **Pattern generalizes** — any JavaScript backend where docs-drift is a problem
+
+## Gotchas
+
+- **JSDoc comment format is picky.** Forget the leading ` * ` on a line and the YAML block breaks silently — the endpoint just won't appear in the spec. Test by opening `/api/docs.json` and grepping for the path.
+- **No type inference from TypeScript types.** You restate the shape in YAML that duplicates your types. Worth it for the browser UX; annoying when they drift. `zod-to-openapi` or `@asteasolutions/zod-to-openapi` can generate the spec from your runtime validators if you use Zod.
+- **Moving a route between files changes the scanned file list.** If you forget to update the `apis: [...]` glob, docs silently vanish for that route.
+- **Example values are not validated.** An `example: 'foo'` inside a `number` schema serves anyway; Swagger UI renders it as if it were valid. Keep examples correct by habit.
+- **Reusable schemas live in `components/schemas`.** Put them in one dedicated file (`lib/swagger.js`) rather than duplicating across routes. Reference with `$ref: '#/components/schemas/Task'`.
+- **Auth isn't documented for free.** You have to declare `securitySchemes` and add `security: [{ bearerAuth: [] }]` to each protected route. Easy to forget on new endpoints.
+
+## See also
+
+- [projects/atrium](../../projects/atrium/) · [projects/markstack](../../projects/markstack/)
