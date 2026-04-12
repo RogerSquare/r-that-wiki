@@ -1,0 +1,68 @@
+---
+title: Mutable data outside the repo (CAIRN_DATA_DIR)
+description: An env-var pattern for keeping admin-edited content where git pull can't overwrite it.
+---
+
+> **Source:** [cairn/ts/src/data.ts](https://github.com/RogerSquare/cairn/blob/main/ts/src/data.ts) · commit `1fc6292`
+> **Category:** Pattern — deployment
+
+## What it is
+
+A tiny convention: runtime-mutable files live at a path controlled by an environment variable (`CAIRN_DATA_DIR`), not inside the repo. The repo only ships **seed templates** that are copied on first boot if the target is empty.
+
+## Why it exists
+
+Cairn's admin CMS edits `ts/data.json` (bio, projects, skills) and `ts/posts/` (blog posts) on the live VPS. Originally those files were tracked in git — the thinking was "data.json is content, content should be in the repo". That was wrong for a very concrete reason:
+
+On the next `git pull`, one of two things happened:
+
+1. The VPS's edited `data.json` got **silently overwritten** by whatever was in the repo, or
+2. The pull **aborted with a conflict**, blocking every deploy
+
+The admin CMS and `git pull` were fighting each other, and it only got worse as admin got used more. So: split code from content. Code lives in git. Content lives on the box. First-boot seeds bridge the gap for fresh installs.
+
+## Code
+
+```ts
+// ts/src/data.ts
+const REPO_TS_DIR = join(__dirname, '..');
+const DATA_DIR = process.env.CAIRN_DATA_DIR || REPO_TS_DIR;
+const DATA_PATH = join(DATA_DIR, 'data.json');
+const SEED_PATH = join(REPO_TS_DIR, 'data.example.json');
+
+// First-boot seed: if data.json is missing, copy from the committed template.
+if (!existsSync(DATA_PATH)) {
+  if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
+  if (existsSync(SEED_PATH)) {
+    copyFileSync(SEED_PATH, DATA_PATH);
+  } else {
+    throw new Error(`No data.json at ${DATA_PATH} and no seed at ${SEED_PATH}`);
+  }
+}
+```
+
+On the VPS the env var gets set in the systemd unit's drop-in override:
+
+```ini
+# /etc/systemd/system/portfolio-web.service.d/cairn-data-dir.conf
+[Service]
+Environment="CAIRN_DATA_DIR=/var/lib/cairn"
+```
+
+And `ts/data.json` + `ts/posts/` are gitignored. The committed seed files are `ts/data.example.json` + `ts/posts.example/`.
+
+## How it's used
+
+- **Cairn** — `data.json` and `posts/` are the admin-editable content surfaces
+- **Pattern applies broadly** — any app with an admin UI + git-based deploys wants this
+
+## Gotchas
+
+- **Order matters on migration.** If the VPS already has admin-edited data and you're adopting this mid-stream, you *must* copy the live data to `$CAIRN_DATA_DIR` **before** the next `git pull`. Otherwise the pull deletes the tracked data.json, the service starts, finds no data, seeds from the older template, and your admin edits are gone.
+- **Don't set SSL host key with this pattern.** Cairn generates `host_key` on first run and then reads it forever. That *also* lives outside the repo (gitignored), but the seed pattern doesn't apply — you don't want a new host key on every fresh install; you want the first-run one to persist. Plain `mkdirSync + writeFileSync` with no seed.
+- **Logs, temp files, uploads** should land in `$CAIRN_DATA_DIR` too, not the repo directory. Otherwise you're re-creating the problem with a different file.
+- **Documentation is part of the pattern.** The README deploy section has to tell future-you "run the migration *before* the first git pull with this change" or future-you will delete data. Ask me how I know.
+
+## See also
+
+- `projects/cairn` — where this pattern is live

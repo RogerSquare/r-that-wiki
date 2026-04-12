@@ -1,0 +1,84 @@
+---
+title: Drop unused catch bindings (AST-ish script)
+description: Strip `catch (e)` to `catch` across a repo without breaking catches that actually use e.
+---
+
+> **Source:** one-shot script used in [artifex commit `8c01499`](https://github.com/RogerSquare/Artifex/commit/8c01499)
+> **Category:** Snippet — codemod
+
+## What it is
+
+A ~30-line Node script that walks all `.js`/`.jsx`/`.ts`/`.tsx` files and replaces `catch (name)` with `catch` **only** when `name` is unused inside the catch body. Uses balanced-brace scanning (not full AST) to find the catch body and a `\b<name>\b` word-boundary check to decide if the binding is referenced.
+
+## Why it exists
+
+ES2019 added optional catch binding: `catch { ... }` instead of `catch (e) { ... }`. `eslint:recommended` flags `'e' is defined but never used` when the binding is unused, and `no-empty` flags empty bodies. Across artifex there were ~30 sites of `catch (e) {}` or `catch (e) { /* swallow */ }`.
+
+Pure regex replacement (`s/catch (e)/catch/g`) is wrong — it also strips the binding from `catch (e) { console.error(e) }`, which then throws `ReferenceError` at runtime. Full AST with `@babel/parser` + codemod is overkill for a one-shot migration. Balanced-brace + word-boundary is the 80/20 middle ground: handles nested blocks correctly, doesn't care about syntax quirks inside catches (template strings, regex literals) because we only inspect for the binding name as a *word*.
+
+## Code
+
+```js
+// fix-catches.cjs (one-shot, delete after)
+const fs = require('fs');
+const path = require('path');
+
+function walk(dir) {
+  return fs.readdirSync(dir, { withFileTypes: true }).flatMap(d =>
+    d.isDirectory() ? walk(path.join(dir, d.name)) : [path.join(dir, d.name)]
+  );
+}
+
+const files = walk('src').filter(f => /\.(jsx?|tsx?)$/.test(f));
+let total = 0;
+
+for (const f of files) {
+  const src = fs.readFileSync(f, 'utf8');
+  let out = '';
+  let i = 0;
+  const re = /catch\s*\((\w+)\)\s*\{/;
+  while (i < src.length) {
+    const slice = src.slice(i);
+    const m = slice.match(re);
+    if (!m) { out += slice; break; }
+    out += slice.slice(0, m.index);
+    const absStart = i + m.index;
+    const varname = m[1];
+    const bodyStart = absStart + m[0].length;
+    // balanced-brace scan to find matching }
+    let depth = 1, j = bodyStart;
+    while (j < src.length && depth > 0) {
+      const c = src[j];
+      if (c === '{') depth++;
+      else if (c === '}') depth--;
+      if (depth === 0) break;
+      j++;
+    }
+    const body = src.slice(bodyStart, j);
+    const used = new RegExp('\\b' + varname + '\\b').test(body);
+    if (used) {
+      out += src.slice(absStart, j + 1);
+    } else {
+      out += 'catch {' + body + '}';
+      total++;
+    }
+    i = j + 1;
+  }
+  if (out !== src) fs.writeFileSync(f, out);
+}
+console.log('replacements:', total);
+```
+
+Run once, commit, delete the script.
+
+## How it's used
+
+- **Artifex** — 32 replacements across 10 files in one commit, zero false positives
+- **Pattern applies** to any similar "touch every X only when Y" codemod where full AST tooling is heavier than the problem
+
+## Gotchas
+
+- **False negatives on string literals.** If a string inside the catch contains the binding name (e.g. `throw new Error('e is unused')`), the word-boundary check thinks it's used. Acceptable — the replacement is conservative: worst case you leave a few `catch (e)` that could have been stripped.
+- **Don't use for multi-char names like `error` or `err` if you have identifiers that shadow them.** My word-boundary match is liberal; a `let err = 1` later in the function would make the rewriter preserve the binding. Usually fine, but inspect the diff.
+- **Won't rename catches that use the binding** — e.g. `catch (e) { console.error(e) }` is preserved exactly, even if you wanted to rename to `catch (err)`. That's a different codemod.
+- **Committed the script initially; reverted.** First pass I had a regex escaping bug (`\\\\b` in shell-quoted Node inline) and it dropped `e` from ~40 catches that used it. Always run on a clean tree so `git checkout --` can revert, and visually inspect the diff on a sample file before trusting the replacement count.

@@ -1,0 +1,83 @@
+---
+title: Cairn
+description: Terminal-first personal portfolio. Accessible via `ssh r-that.com` and `https://r-that.com`.
+---
+
+> **Source:** [RogerSquare/cairn](https://github.com/RogerSquare/cairn) · Live: [r-that.com](https://r-that.com) + `ssh r-that.com`
+> **Category:** Project tour
+
+## What it is
+
+A portfolio site that renders as an **interactive terminal app** over SSH, plus a parallel **web version** for people who'd rather use a browser. Both read from the same `data.json` + `posts/` tree. The TUI is built with [Ink](https://term.ink/), the web server is Express, and a small admin CMS lets me edit content in a browser.
+
+## Why it exists
+
+Point of pride, recruitment differentiator, and a sandbox for terminal UI ideas that don't belong in a grown-up project. The SSH-accessible version is the hook — `ssh r-that.com` is 18 characters that says more about how I work than a landing page ever could.
+
+The web version exists because most people won't SSH anywhere, and I want the content to be actually findable and indexed.
+
+## Shape
+
+```
+cairn/                             # repo root
+├── ts/
+│   ├── src/
+│   │   ├── app.tsx                # Ink entrypoint (local dev)
+│   │   ├── ssh-server.tsx         # Ink rendered over ssh2 session
+│   │   ├── web-server.ts          # Express + MDX-ish SSR
+│   │   ├── Portfolio.tsx          # shared Ink root component
+│   │   ├── sections/              # about, projects, experience, etc.
+│   │   └── data.ts                # loads data.json, applies CAIRN_DATA_DIR
+│   ├── data.example.json          # committed seed (sample bio)
+│   ├── posts.example/             # committed seed posts
+│   └── package.json
+└── README.md                      # includes deploy runbook
+```
+
+Non-ts/ stuff (old Go version, Windows service installers) is historical and not live anymore.
+
+## Deployment
+
+The site is on a **Hostinger VPS** behind **nginx** (added in this session — prior to it, the Node server bound `:80` directly):
+
+```
+Cloudflare (TLS for web, pass-through for ssh)
+      │
+      ├── r-that.com ───────→ VPS:80 ──→ nginx ──→ localhost:3000 (portfolio-web.service)
+      └── wiki.r-that.com ──→ VPS:80 ──→ nginx ──→ /var/www/wiki (static files)
+
+ssh r-that.com ──→ VPS:22 ──→ portfolio.service (Node + ssh2 + Ink)
+```
+
+Two systemd services:
+- `portfolio.service` — SSH portfolio on `:22`
+- `portfolio-web.service` — web server on `:3000` (used to be `:80`)
+
+Both read config from the **same `$CAIRN_DATA_DIR`** (set to `/var/lib/cairn` via a systemd drop-in). See the [mutable-data-outside-the-repo pattern](../../patterns/cairn-data-dir/) for why that env var exists.
+
+Happy-path deploy after `git push`:
+
+```bash
+ssh -p 2200 root@r-that.com
+cd /opt/portfolio && git pull
+sudo systemctl restart portfolio.service portfolio-web.service
+```
+
+That's it. Admin edits to `/var/lib/cairn/data.json` survive the pull because they're not in the repo.
+
+## Non-obvious design choices
+
+- **Admin SSH is on port 2200, portfolio SSH on 22.** Required because you can only bind one process to :22. The portfolio gets the canonical port so `ssh r-that.com` works with no flags; admin gets a non-guessable port as a mild security-through-obscurity win (on top of key auth).
+- **The ssh server has to fake `cursorTo`, `clearLine`, `moveCursor`.** Ink expects Node `WriteStream` methods; ssh2 gives you a channel with just `write`. Stream bridging in `ssh-server.tsx` implements those with raw ANSI escapes.
+- **Chalk needs `FORCE_COLOR=3`** in the SSH version. It detects color capability from `process.stdout`, not the SSH channel, so without the env var the terminal gets monochrome output.
+- **Cloudflare proxy is *off* for the root record** (grey cloud, not orange) because CF doesn't proxy non-HTTP. Proxy on would break `ssh r-that.com`. Consequence: the root site has no TLS — it's HTTP-only. Subdomains that don't need port 22 (like `wiki.r-that.com`) can have proxy on and get free TLS.
+
+## Gotchas discovered the hard way
+
+- **Don't `git pull` before backing up live data** on a machine that runs an admin CMS editing tracked files. The [CAIRN_DATA_DIR pattern](../../patterns/cairn-data-dir/) exists because this happened.
+- **systemctl edit opens a blank file.** If you save without typing anything, the override is empty. Check the result with `systemctl cat` afterward, or write drop-in files directly under `/etc/systemd/system/<unit>.d/`.
+- **Cloudflare 522 on a new subdomain** almost always means SSL mode is "Full" or "Full (strict)" and your origin only has HTTP. Switch to "Flexible" or install a Cloudflare Origin Cert on nginx.
+
+## See also
+
+- [Mutable data outside the repo (CAIRN_DATA_DIR)](../../patterns/cairn-data-dir/) — the env var + seed template pattern powering content persistence

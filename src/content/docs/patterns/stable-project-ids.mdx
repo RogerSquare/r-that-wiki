@@ -1,0 +1,84 @@
+---
+title: Stable short IDs with a tiny registry
+description: Decouple user-visible names from the identifier everything else uses.
+---
+
+> **Source:** [atrium/backend/lib/projectRegistry.js](https://github.com/RogerSquare/atrium/blob/main/backend/lib/projectRegistry.js) · commit `9f24423`
+> **Category:** Pattern — identity
+
+## What it is
+
+Every entity (project, tenant, workspace, whatever) gets two things:
+
+1. A short, stable **ID** (`atb`, `portfolio`, `sdh-gtm`) — never changes, used in URLs, API calls, external links
+2. A display **name** and **folder** (`Atrium`, `Cairn`, `SDH-GameThemeMusic`) — can change freely, user-visible
+
+A small JSON file maps them.
+
+## Why it exists
+
+Atrium started with projects keyed by folder name. "Agent Task Board" was the display name, the folder, and the API key. Then I rebranded to "Atrium". Three things wanted to break at once:
+
+- The folder on disk (`backend/tasks/Agent-Task-Board/`) had to move
+- Every API caller referencing `project=Agent-Task-Board` had to be updated
+- The task markdown files' embedded `project: Agent-Task-Board` fields drifted out of sync
+
+Splitting identity gave me an escape hatch: `id=atb` stays stable forever, and the name/folder can be anything I want today. Renaming Portfolio → Cairn a few weeks later was a two-field edit in `projects.json`. Zero API-caller changes. Zero task-file edits.
+
+## Code
+
+The registry is a plain JSON file + a lib with load/save/register/resolve/setName:
+
+```js
+// backend/lib/projectRegistry.js
+function load() { return JSON.parse(readFileSync(PROJECTS_FILE, 'utf8')) }
+function save(r) { writeFileSync(PROJECTS_FILE, JSON.stringify(r, null, 2), 'utf8') }
+
+function setName(id, name) {
+  if (id === 'root') return false           // protected
+  const r = load()
+  if (!r[id]) return false
+  r[id].name = name
+  save(r)
+  return true
+}
+
+function updateId(oldId, newId) {
+  if (oldId === 'root' || newId === 'root') return false
+  if (!/^[a-z0-9][a-z0-9-]{0,11}$/.test(newId)) return false
+  const r = load()
+  if (!r[oldId] || r[newId]) return false
+  r[newId] = r[oldId]
+  delete r[oldId]
+  save(r)
+  return true
+}
+```
+
+The `projects.json` data shape:
+
+```json
+{
+  "atb":       { "name": "Atrium",              "folder": "Atrium" },
+  "portfolio": { "name": "Cairn",               "folder": "Cairn" },
+  "sdh-gtm":   { "name": "SDH-GameThemeMusic",  "folder": "SDH-GameThemeMusic" }
+}
+```
+
+API endpoints accept **either** id or name and normalize via `registry.resolve(idOrName)`. Task files on disk have **no** `project:` field — the folder location is the source of truth, and the registry translates folder → id/name.
+
+## How it's used
+
+- **Atrium** — projects are first-class, the sidebar groups tasks by them, URLs can use short IDs
+- **Pattern applies** to any "categorize things into user-defined buckets" scenario — anywhere you might otherwise key by display name
+
+## Gotchas
+
+- **Read through `getAll()` then mutate** doesn't save. I shipped a bug where `registry.getAll()[id].name = newName` appeared to work but never wrote to disk. Always go through a dedicated setter that calls `save()`. See `atrium/bug-shortids-001`.
+- **ID format regex matters.** I use `/^[a-z0-9][a-z0-9-]{0,11}$/` — lowercase alphanumeric + hyphens, 1-12 chars, starts with alphanumeric. Short enough to type, long enough to be unique, narrow enough to be URL-safe.
+- **Protect the root/default ID.** In Atrium's case `root` (the "Unassigned" project) can't be renamed or deleted. Every method checks `if (id === 'root') return false` as the first line.
+- **Syncing with disk.** Folders can appear outside the registry (someone mkdir'd directly). `syncWithDisk(dirsOnDisk)` adds missing ones and prunes deleted ones on each read. Cheap; runs on every `GET /api/projects`.
+
+## See also
+
+- `projects/atrium` — where this pattern is in use
