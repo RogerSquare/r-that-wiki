@@ -1,0 +1,63 @@
+---
+title: Stats dashboard
+description: Four tiles plus a sparkline. Tells the admin how Artifex is doing in one glance.
+---
+
+import StatsDashboard from '../../../examples/stats-dashboard.tsx';
+
+> **Source:** [artifex/frontend/src/components/StatsDashboard.jsx](https://github.com/RogerSquare/Artifex/blob/main/frontend/src/components/StatsDashboard.jsx)
+> **Category:** Admin view
+
+**Stats dashboard** — the admin landing screen. Four big-number tiles (total images, storage used, collection count, uploads today) plus a small sparkline showing upload trend. No charting library, no heavyweight framework — just SVG.
+
+## What it is
+
+A responsive grid of "Tile" components (label, big number, optional sub-label) and one sparkline panel. Data comes from a single `/api/admin/stats` endpoint that runs a few `SELECT COUNT(*)` queries. Refresh on load; no polling.
+
+## Why it exists
+
+Admin metrics tend to become huge Grafana dashboards. For a self-hosted personal app, that's theater. The actual questions an admin has: "how much stuff is in there", "how much disk am I using", "is anything broken". Four tiles answer all three.
+
+## Live
+
+<div style={{ padding: 20, background: '#020617', borderRadius: 8 }}>
+  <StatsDashboard client:load />
+</div>
+
+## Sparkline (no library)
+
+```jsx
+function Spark({ values, color = '#60a5fa' }) {
+  const max = Math.max(...values, 1);
+  const w = 140, h = 32;
+  const step = w / (values.length - 1);
+  const points = values.map((v, i) => `${i * step},${h - (v / max) * h}`).join(' ');
+  return (
+    <svg width={w} height={h}>
+      <polyline points={points} fill="none" stroke={color} strokeWidth="1.5" />
+    </svg>
+  );
+}
+```
+
+That's the whole chart. For anything fancier (multiple series, axes, tooltips), reach for Recharts or Chart.js — but for one line of 12 values, the above is a quarter of the size.
+
+## How it's used
+
+- **Artifex** — the admin home; first thing you see after clicking "Admin"
+- **Pattern generalizes** to any admin dashboard for a self-hosted app where full observability is overkill
+
+## Gotchas
+
+- **Big-number tiles lie without units.** "1,234" is meaningless without context. Always include a label and, where relevant, a comparison ("+42 this week").
+- **Storage numbers are eventually-consistent.** File size totals come from the database, which lags actual disk usage. Trust the DB, but include "as of \<timestamp\>" somewhere.
+- **Sparkline doesn't tell you what's wrong.** For outages or failed jobs, a sparkline is insufficient — show counts on the Admin Settings Jobs tab instead.
+- **Refetch on tab focus.** If the admin left the tab open yesterday, the numbers are stale. Refetch on `document.visibilitychange` so returning to the tab shows fresh data.
+- **Don't over-animate.** Number-counter animations look flashy, cost attention, and delay reading. Just render the final value.
+- **Responsive breakpoints.** 4 tiles in a row on desktop; 2×2 on tablet; stacked on phone. `grid-template-columns: repeat(auto-fit, minmax(150px, 1fr))` handles most of this automatically.
+- **Loading state.** Show skeleton tiles (same layout, muted colors) while fetching. A blank dashboard feels broken.
+
+## See also
+
+- [projects/artifex](../../projects/artifex/)
+- [components/admin-settings](../admin-settings/) — where deeper admin views live

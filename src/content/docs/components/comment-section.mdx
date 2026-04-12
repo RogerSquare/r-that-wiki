@@ -1,0 +1,47 @@
+---
+title: Comment section
+description: Per-image threaded comments. Reverse-chronological list plus an input box.
+---
+
+import CommentSection from '../../../examples/comment-section.tsx';
+
+> **Source:** [artifex/frontend/src/components/CommentSection.jsx](https://github.com/RogerSquare/Artifex/blob/main/frontend/src/components/CommentSection.jsx)
+> **Category:** Composite component
+
+**Comment section** — a flat (non-threaded) list of comments on an image, with a single input box for adding one. Each row: username, timestamp, body. Enter posts.
+
+## What it is
+
+Comments are stored in a `comments` table (image_id, user_id, text, created_at). The component fetches the list for the current image, renders each row, and handles new-comment submission via an API POST. No nested replies, no upvotes — just a conversation thread.
+
+## Why it exists
+
+Sharing a gallery with friends or a small community makes "which seed did you use" and "how did you get the lighting like that" inevitable questions. Comments right on the image keep the Q&A co-located with the artifact; Discord/Slack links would fragment the answers.
+
+## Live
+
+<div style={{ padding: 20, background: '#020617', borderRadius: 8, display: 'flex', justifyContent: 'center' }}>
+  <CommentSection client:load />
+</div>
+
+## How it's used
+
+- **Artifex** — shown below the metadata panel in the [photo viewer](../photo-viewer/); hidden if the viewer is embedded in a compact context
+- **Pattern generalizes** to any per-item comment thread where flat > threaded
+
+## Gotchas
+
+- **Flat, not threaded.** Reply trees are overkill for a small-community gallery and induce social behavior we don't want. Flat keeps conversations focused on the image.
+- **Realtime via socket.** See [socket-io-live-state-fanout](../../patterns/socket-io-live-state-fanout/). When someone else comments, you want to see it without refreshing.
+- **Optimistic posts.** Add the comment to the list immediately, then reconcile with the server response. Shows snappy; rolls back on failure.
+- **Markdown or plain text?** Plain text is simpler and avoids mis-parsed Markdown in short comments. Add Markdown only if your community writes long replies with code blocks.
+- **Spam.** Even a small-community gallery gets spam if it's public. Rate limit comment posting per user (see [rate-limit-per-endpoint](../../patterns/rate-limit-per-endpoint/)) and keep a block list for federation peers.
+- **Delete permissions.** Commenter can delete their own; image owner can delete any comment on their image; admin can delete anything.
+- **Mentions.** `@alice` should link to that user's profile. Parse at render time, not at save time — changes to usernames are rare but should propagate.
+- **Long comments need truncation.** "Show more" after ~4 lines; prevents one essay from dominating the thread.
+
+## See also
+
+- [components/photo-viewer](../photo-viewer/) — where this gets rendered
+- [patterns/socket-io-live-state-fanout](../../patterns/socket-io-live-state-fanout/)
+- [patterns/rate-limit-per-endpoint](../../patterns/rate-limit-per-endpoint/)

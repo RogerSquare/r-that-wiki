@@ -1,0 +1,46 @@
+---
+title: Profile page
+description: "User's public page: banner, avatar, stats, and a masonry grid of their public images."
+---
+
+import ProfilePage from '../../../examples/profile-page.tsx';
+
+> **Source:** [artifex/frontend/src/components/ProfilePage.jsx](https://github.com/RogerSquare/Artifex/blob/main/frontend/src/components/ProfilePage.jsx)
+> **Category:** View
+
+**Profile page** — public-facing view of a user. Banner + circular avatar + name + stats bar + masonry grid of their public images. The Twitter/Instagram shape, scaled for a self-hosted gallery.
+
+## What it is
+
+A hero section (gradient banner, avatar overlapping), a stats strip (join date, image count, collection count), a Follow button for viewers who aren't the owner, and a masonry grid of the user's public images. Clicking an image opens the [photo viewer](../photo-viewer/) as usual.
+
+## Why it exists
+
+Multi-user Artifex (and its federation) assume users have identities. The profile page is the canonical landing for "who is this person and what do they make". Visiting `/@alice` (or `/users/alice`) renders this page.
+
+## Live
+
+<div style={{ padding: 16, background: '#000', borderRadius: 8 }}>
+  <ProfilePage client:load />
+</div>
+
+## How it's used
+
+- **Artifex** — `/users/:username` route; linked from comments, collections, gallery metadata
+- **Pattern generalizes** to any app with user-generated content where "whose is this" matters
+
+## Gotchas
+
+- **Public vs private images.** The profile shows only `visibility: public` images. Attempting to access `/users/:username` when that user has no public images should still render the profile with an empty state.
+- **Blocked users.** If your app has blocking, a blocked viewer sees either a "this user has no public images" state or a 404 — pick one consistent behavior.
+- **Follow button.** Follow/unfollow is a write; rate-limit and require auth. Show "Follow back" if the owner already follows the viewer.
+- **Own profile.** Viewing your own profile shows Edit instead of Follow, and all your images (public + private) with a visibility indicator per tile.
+- **SEO.** Public profile pages are indexed content. Include proper meta tags (Open Graph, Twitter cards, `<link rel="canonical">`) and JSON-LD Person schema (see [json-ld-schema-org](../../patterns/json-ld-schema-org/)).
+- **Pagination.** Users with thousands of public images need infinite scroll or pagination. Artifex defaults to a first page of ~60 images.
+- **Federation.** If the user is on a federated peer, the profile URL includes the peer host (`/users/alice@peer.example`). Images proxy through the local instance (see [federation-pull-and-proxy](../../patterns/federation-pull-and-proxy/)).
+
+## See also
+
+- [projects/artifex](../../projects/artifex/)
+- [components/masonry-grid](../masonry-grid/) — the grid shown below the header
+- [patterns/federation-pull-and-proxy](../../patterns/federation-pull-and-proxy/) — for cross-instance profiles

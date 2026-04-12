@@ -1,0 +1,90 @@
+---
+title: Full-resolution proxy route (streaming)
+description: Serve the original image through an auth-checked Express route. Stream, don't buffer. Set Content-Type, Content-Length, and Cache-Control correctly.
+---
+
+> **Source:** [artifex/backend/routes/images.js](https://github.com/RogerSquare/Artifex) — `/images/:id/original`
+> **Category:** Snippet — HTTP
+
+**Full-res proxy route** — the endpoint that serves the raw uploaded file when the user clicks "Download" or opens the image in a new tab. Non-trivially correct: auth, streaming, correct headers, graceful 404s, no buffering large files into memory.
+
+## Why it's non-trivial
+
+Wrong-way 1: `res.sendFile(path)` from Express — fine for small files; fine for small user counts; breaks on tens of MB images because sendFile buffers reads. Sort of.
+
+Wrong-way 2: `fs.readFile(path, (err, data) => res.send(data))` — buffers the entire file in memory. A single 50MB upload triples memory usage; concurrent downloads compound.
+
+Right way: stream. `fs.createReadStream(path).pipe(res)`. Set headers first; the stream pipes bytes out as the disk yields them.
+
+## Shape
+
+```js
+import { stat, createReadStream } from 'fs';
+import { promisify } from 'util';
+import mime from 'mime';
+
+const statAsync = promisify(stat);
+
+router.get('/images/:id/original', requireAuth, async (req, res) => {
+  const image = await db.getImage(req.params.id);
+  if (!image) return res.status(404).json({ error: 'Not found' });
+
+  // Authorization
+  if (image.visibility !== 'public' && image.user_id !== req.user.id) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+
+  let stats;
+  try { stats = await statAsync(image.file_path); }
+  catch { return res.status(404).json({ error: 'File missing' }); }
+
+  const contentType = mime.getType(image.file_path) ?? 'application/octet-stream';
+  res.setHeader('Content-Type', contentType);
+  res.setHeader('Content-Length', stats.size);
+  res.setHeader('Cache-Control', 'private, max-age=3600');
+  res.setHeader(
+    'Content-Disposition',
+    req.query.download ? `attachment; filename="${image.original_name}"` : 'inline'
+  );
+
+  const stream = createReadStream(image.file_path);
+  stream.on('error', err => {
+    if (!res.headersSent) res.status(500).end();
+    else res.destroy(err);
+  });
+  stream.pipe(res);
+});
+```
+
+## Range request support (for video)
+
+Video files need range requests so browsers can seek. A few more headers:
+
+```js
+const range = req.headers.range;
+if (range) {
+  const [start, end] = parseRange(range, stats.size);
+  res.status(206);
+  res.setHeader('Content-Range', `bytes ${start}-${end}/${stats.size}`);
+  res.setHeader('Content-Length', end - start + 1);
+  res.setHeader('Accept-Ranges', 'bytes');
+  createReadStream(image.file_path, { start, end }).pipe(res);
+  return;
+}
+```
+
+## Gotchas
+
+- **Set `Content-Length` or forego it.** Omitting it is fine (Express chunks the response), but a known length enables progress bars on the client. `stat().size` gives it to you for free.
+- **`Cache-Control: private` on authenticated files.** `public` caches in CDNs and reverse proxies — unauthenticated requests may hit stale auth'd content. `private` keeps it user-scoped.
+- **`immutable` is only safe if the URL changes on content change.** Originals keyed by id should NOT be `immutable` — a user can delete and re-upload the same id in theory. Skip it; `max-age` is enough.
+- **Content-Disposition inline vs attachment.** `inline` makes the browser display it (if it can); `attachment` forces a download. Expose via query param rather than separate routes.
+- **Stream error handling is subtle.** If the stream errors after headers are sent, you can't send a 500 — you have to destroy the response. If error comes before `pipe`, you still have time to send an error status.
+- **Don't proxy through your app if a CDN can do it.** For high-traffic gallery servers, put Cloudflare or nginx in front of the originals dir and let them stream the bytes. Express is fine up to dozens of req/s; CDNs handle thousands.
+- **Chunked encoding.** If you omit Content-Length, Express uses chunked encoding. Most clients handle this; some proxies break it. Always set Content-Length when you have it.
+- **`res.destroy()` vs `res.end()`.** On error after bytes flowed, `end()` leaves the connection hanging in a weird state. `destroy()` tears it down cleanly.
+
+## See also
+
+- [patterns/sharp-image-pipeline](../../patterns/sharp-image-pipeline/) — the sibling derivative routes (smaller files, same shape)
+- [projects/artifex](../../projects/artifex/)

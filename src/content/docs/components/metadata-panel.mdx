@@ -1,0 +1,78 @@
+---
+title: Metadata panel
+description: Collapsible sections for prompt, params, file info, and tags. The sidebar in the photo viewer.
+---
+
+import MetadataPanel from '../../../examples/metadata-panel.tsx';
+
+> **Source:** [artifex/frontend/src/components/MetadataPanel.jsx](https://github.com/RogerSquare/Artifex/blob/main/frontend/src/components/MetadataPanel.jsx)
+> **Category:** Composite component
+
+**Metadata panel** — the collapsible sidebar that displays everything Artifex knows about an image: prompt, negative prompt, generation parameters, file info, and tags. Each section opens and closes independently; the user keeps the ones they care about visible and collapses the rest.
+
+## What it is
+
+A stack of `<Section>` components. Each has a header (title, disclosure chevron) and a body (key-value list, tag pills, or prompt text block). Open/closed state is local per section. The data comes from the normalized output of the [workflow JSON parser](../../patterns/workflow-json-parser/).
+
+## Why it exists
+
+AI image metadata is wide. A minimal display (filename + dimensions) misses the point; a full dump (every parameter, raw JSON, EXIF, history) overwhelms the reader. Sectioned metadata lets the user navigate what they care about.
+
+## Live
+
+<div style={{ padding: 20, background: '#020617', borderRadius: 8, display: 'flex', justifyContent: 'center' }}>
+  <MetadataPanel client:load />
+</div>
+
+## Code sketch
+
+```jsx
+function Section({ title, children, defaultOpen = true }) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className="section">
+      <button onClick={() => setOpen(o => !o)} className="section-header">
+        <Chevron open={open} /> {title}
+      </button>
+      {open && <div className="section-body">{children}</div>}
+    </div>
+  );
+}
+
+<MetadataPanel>
+  <Section title="Prompt">
+    <p>{image.prompt}</p>
+    {image.negative_prompt && <p className="negative">{image.negative_prompt}</p>}
+  </Section>
+  <Section title="Params">
+    <KV k="Model" v={image.model} />
+    <KV k="Sampler" v={image.sampler} />
+    <KV k="Steps" v={image.steps} />
+    <KV k="CFG" v={image.cfg_scale} />
+    <KV k="Seed" v={image.seed} />
+  </Section>
+  <Section title="Tags">
+    <TagList tags={image.tags} />
+  </Section>
+</MetadataPanel>
+```
+
+## How it's used
+
+- **Artifex** — rendered in the [photo viewer](../photo-viewer/)'s right sidebar
+- **Pattern generalizes** to any data inspector UI (dev tools, form validation summaries, API response panels)
+
+## Gotchas
+
+- **Missing fields should fold their section.** An image with no prompt or no tags shouldn't render an empty section. Either hide it or show an "empty" placeholder — not a blank white box.
+- **Remember open/closed per section, not globally.** User prefers "Tags always open, Params always closed"; persist per section key in localStorage.
+- **Copy-to-clipboard on prompt and seed.** Those are the two things users most often re-use. Add a subtle "Copy" icon on hover.
+- **Long prompts need overflow handling.** Some prompts are full paragraphs. CSS `overflow-wrap: break-word` keeps them contained; a "Show more" truncation is useful for very long ones.
+- **Seed is a big number.** Monospace font is mandatory (9 digits of jitter is painful in proportional fonts).
+- **Don't tightly couple to generation params.** Leave room for other metadata sources: image EXIF (camera shots), import notes (Flickr/Immich origin), manual user captions. Sections are the flexibility boundary.
+- **Click-to-filter on tags.** Each tag pill, when clicked, should filter the gallery by that tag. Subtle hover state makes this discoverable.
+
+## See also
+
+- [components/photo-viewer](../photo-viewer/) — the parent view
+- [patterns/workflow-json-parser](../../patterns/workflow-json-parser/) — the upstream data normalization

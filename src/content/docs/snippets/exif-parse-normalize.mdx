@@ -1,0 +1,89 @@
+---
+title: EXIF parse and normalize
+description: Read EXIF from an uploaded image, normalize the fields you actually use, drop the rest.
+---
+
+> **Source:** [artifex/backend/lib/exif.js](https://github.com/RogerSquare/Artifex)
+> **Category:** Snippet — media metadata
+
+**EXIF parse + normalize** — EXIF has hundreds of possible fields, most of them garbage. Extract the fields you care about (camera, lens, shutter, ISO, timestamp, GPS), normalize their formats, drop everything else. Store the normalized fields; keep the raw blob only if you might need it later.
+
+## What it is
+
+A tiny function per useful EXIF field that coerces the library's output into your canonical shape. Uses [`exifr`](https://github.com/MikeKovarik/exifr) (or `exif-parser`, `sharp.metadata().exif`) for extraction.
+
+## Shape
+
+```js
+import exifr from 'exifr';
+
+const CANONICAL_FIELDS = [
+  'Make', 'Model',
+  'LensModel',
+  'ExposureTime',
+  'FNumber',
+  'ISO',
+  'FocalLength',
+  'FocalLengthIn35mmFormat',
+  'DateTimeOriginal',
+  'GPSLatitude', 'GPSLongitude',
+];
+
+async function extractExif(filePath) {
+  try {
+    const raw = await exifr.parse(filePath, { pick: CANONICAL_FIELDS });
+    if (!raw) return null;
+    return {
+      camera_make:       raw.Make ?? null,
+      camera_model:      raw.Model ?? null,
+      lens:              raw.LensModel ?? null,
+      shutter_speed:     formatShutter(raw.ExposureTime),
+      aperture:          raw.FNumber ? `f/${raw.FNumber.toFixed(1)}` : null,
+      iso:               raw.ISO ?? null,
+      focal_length_mm:   raw.FocalLength ?? null,
+      focal_length_35mm: raw.FocalLengthIn35mmFormat ?? null,
+      taken_at:          raw.DateTimeOriginal ? new Date(raw.DateTimeOriginal).toISOString() : null,
+      gps_lat:           raw.latitude ?? null,
+      gps_lng:           raw.longitude ?? null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function formatShutter(seconds) {
+  if (seconds == null) return null;
+  if (seconds >= 1) return `${seconds}s`;
+  return `1/${Math.round(1 / seconds)}`;      // e.g. "1/125"
+}
+```
+
+## Why normalize?
+
+Raw EXIF is hostile:
+- **Shutter speed** comes as a float (0.008 for "1/125"). Users read fractions.
+- **Aperture** is a float (2.8) but should display as "f/2.8".
+- **GPS** comes as degrees/minutes/seconds in some libraries, decimals in others. Decimals beat DMS in all cases.
+- **Dates** arrive as strings in local time with a timezone you can't trust. Always convert to UTC ISO.
+- **Make/Model** often has trailing whitespace or manufacturer codes.
+
+## How it's used
+
+- **Artifex** — image uploads extract EXIF at the same time Sharp generates derivatives. Result stored alongside the image record.
+- **Pattern generalizes** to any app consuming image metadata for display or search
+
+## Gotchas
+
+- **Strip GPS before sharing.** `gps_lat`/`gps_lng` reveal where a photo was taken. If the image is uploaded for a public gallery, drop GPS from display (and optionally from storage). Exposing a home address via photo upload is a real user harm.
+- **Timezone misery.** `DateTimeOriginal` is in the camera's local time with no zone info. Some cameras set GMT, some set local, most don't say. Treat the parsed date as "best effort" and show it as-is.
+- **Vendor-specific tags.** Canon/Nikon/Sony stuff their own metadata in `MakerNote`. Usually worth ignoring unless you specifically want it.
+- **EXIF can be spoofed or wrong.** Don't trust GPS coords to 6 decimals. Don't reject an upload because the timestamp is in 2035.
+- **PNG images don't have EXIF.** They have `tEXt` chunks with similar info. A second extraction path (png-chunks-extract) handles this.
+- **Video files have their own metadata (`ffprobe`).** Don't try EXIF on videos; use `ffprobe` output instead.
+- **`exifr.parse` returns `null` cleanly** when no metadata is present, but throws on a malformed file. Wrap in try/catch.
+- **`pick` saves memory.** Without it, exifr parses everything; with it, only the requested fields. For batch processing of 10k images, the difference is noticeable.
+
+## See also
+
+- [patterns/sharp-image-pipeline](../../patterns/sharp-image-pipeline/) — the derivative pipeline this runs alongside
+- [projects/artifex](../../projects/artifex/)

@@ -1,0 +1,94 @@
+---
+title: Tag suggestion and review workflow
+description: ML suggests tags; the human confirms, rejects, or edits before they're committed. A middle ground between auto-tagging and manual.
+---
+
+> **Source:** [artifex/backend/jobs/tag-review.js](https://github.com/RogerSquare/Artifex)
+> **Category:** Pattern — ML / UX
+
+**Tag suggestion + review** — run the tagger, store its output as *suggestions* not facts. The user sees pills with a subtle "suggested" visual state, clicks to accept (turns solid) or clicks the × to reject. Only accepted tags feed into search and filters.
+
+## What it is
+
+Three tag states: **accepted** (user-confirmed or manually added), **suggested** (ML output, not yet reviewed), **rejected** (user dismissed; ML never re-suggests). Stored as a status field on the tag row. The gallery search queries only accepted; the admin UI and per-image view show both.
+
+## Why it exists
+
+**The problem:** ML taggers are *mostly* right. "Mostly right" is the worst case for auto-tagging because:
+
+1. Auto-accepting means wrong tags clutter search ("landscape" on a portrait, "cat" on a dog)
+2. Rejecting everything and requiring manual tagging means the ML investment is wasted
+3. Showing scores per tag is too numeric for casual users
+
+**The fix:** three-state tags. ML does the first pass cheaply; the user reviews quickly (mostly one-click accepts); the system learns which tags the user consistently rejects (and stops suggesting them, eventually).
+
+## Shape
+
+Schema:
+
+```sql
+CREATE TABLE image_tags (
+  image_id INTEGER NOT NULL,
+  tag TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('accepted', 'suggested', 'rejected')),
+  source TEXT NOT NULL,             -- 'user' | 'wd_tagger' | 'blip_caption'
+  confidence REAL,                  -- from the ML model, 0..1
+  PRIMARY KEY (image_id, tag)
+);
+CREATE INDEX idx_tags_image ON image_tags(image_id);
+CREATE INDEX idx_tags_accepted ON image_tags(tag) WHERE status = 'accepted';
+```
+
+UI for review (sketch):
+
+```jsx
+function TagReview({ imageId, tags }) {
+  const accepted = tags.filter(t => t.status === 'accepted');
+  const suggested = tags.filter(t => t.status === 'suggested');
+
+  return (
+    <>
+      <div>
+        {accepted.map(t => (
+          <Pill key={t.tag} variant="solid" onRemove={() => setTagStatus(imageId, t.tag, 'rejected')}>
+            {t.tag}
+          </Pill>
+        ))}
+      </div>
+      {suggested.length > 0 && (
+        <div>
+          <label>Suggested by ML ({suggested.length})</label>
+          {suggested.map(t => (
+            <Pill key={t.tag} variant="dashed" confidence={t.confidence}>
+              <button onClick={() => setTagStatus(imageId, t.tag, 'accepted')}>+ {t.tag}</button>
+              <button onClick={() => setTagStatus(imageId, t.tag, 'rejected')} aria-label="Reject">×</button>
+            </Pill>
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+```
+
+## How it's used
+
+- **Artifex** — every uploaded image gets WD Tagger + BLIP results as `suggested`; user can review per image or bulk-accept with a "trust this category" button
+- **Pattern generalizes** to any ML-assisted categorization: automated filing, content moderation, form field extraction
+
+## Gotchas
+
+- **Default behavior matters.** For casual users, "all suggestions accepted by default" is the convenience win but produces noisy tags. For paranoid users, "suggestions hidden, click to review" is safer. Offer both.
+- **Rejections are learning signal.** Track per-user rejection rates by tag; after N rejections of the same tag across the whole library, stop suggesting it to this user.
+- **Bulk review.** Don't force per-image review for 5000 images. Offer "accept all suggestions", "accept all with confidence > 0.8", or "accept all in this collection".
+- **Confidence display.** Small visual indicator (dot opacity, dashed vs solid border) beats a numeric percentage. Users don't want math.
+- **Search uses accepted only.** Rejected tags never match; suggested tags match in the admin view but not public search. Easy to get wrong and leak rejected content into results.
+- **Re-tagging on model upgrade.** If you swap tagger models, old `suggested` tags from the old model need to be cleared or marked with the model version.
+- **Tag normalization.** ML models use their own vocabulary ("1girl", "solo"); users use theirs ("portrait", "single"). A normalization dictionary helps but is tedious to maintain. Start empty, add as you spot mismatches.
+- **Provenance.** `source` column matters for debugging. "Why is this tag here" → check if it's user, wd_tagger, blip_caption. Keep the raw ML output for forensics.
+
+## See also
+
+- [patterns/python-ml-subprocess](../python-ml-subprocess/) — the ML taggers this wraps
+- [patterns/nsfw-classifier-as-tag-not-filter](../nsfw-classifier-as-tag-not-filter/) — sibling "ML as signal, not enforcer" pattern
+- [projects/artifex](../../projects/artifex/)

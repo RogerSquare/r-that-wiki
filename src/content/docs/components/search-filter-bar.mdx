@@ -1,0 +1,75 @@
+---
+title: Search + filter bar
+description: Text search plus togglable filter pills. The thing above every list view.
+---
+
+import SearchFilterBar from '../../../examples/search-filter-bar.tsx';
+
+> **Source:** [artifex/frontend/src/components/SearchFilterBar.jsx](https://github.com/RogerSquare/Artifex/blob/main/frontend/src/components/SearchFilterBar.jsx)
+> **Category:** Control
+
+**Search + filter bar** — a text input, a sort dropdown, and a row of togglable pills for common filters (model, sampler, has-metadata, media-type, tag). One component owns the filter state; the gallery subscribes and re-queries.
+
+## What it is
+
+A small form. Text search runs against the SQLite FTS index (see [sqlite-fts5-search](../../patterns/sqlite-fts5-search/)). Filter pills set structured fields. Everything is debounced and sent as query params to the list endpoint.
+
+## Why it exists
+
+A gallery with 5000 images needs both discovery (search) and browsing (filter). Combining them in one persistent bar above the grid means the user's filter state is always visible — no surprise when switching views, no "where did I set that".
+
+## Live
+
+<div style={{ padding: 20, background: '#020617', borderRadius: 8 }}>
+  <SearchFilterBar client:load />
+</div>
+
+## Shape
+
+```jsx
+export default function SearchFilterBar({ filters, onFiltersChange }) {
+  const [query, setQuery] = useState(filters.q ?? '');
+
+  const debouncedSetQuery = useMemo(() => debounce(q => {
+    onFiltersChange({ ...filters, q });
+  }, 250), [filters, onFiltersChange]);
+
+  const toggleFilter = useCallback((key, value) => {
+    const next = { ...filters };
+    if (next[key] === value) delete next[key];
+    else next[key] = value;
+    onFiltersChange(next);
+  }, [filters, onFiltersChange]);
+
+  const activeCount = Object.keys(filters).filter(k => k !== 'q').length;
+  return (
+    <div className="bar">
+      <input value={query} onChange={e => { setQuery(e.target.value); debouncedSetQuery(e.target.value); }} />
+      <Pill active={filters.model === 'sd_xl'} onClick={() => toggleFilter('model', 'sd_xl')}>sd_xl</Pill>
+      {/* etc */}
+      {activeCount > 0 && <button onClick={() => onFiltersChange({})}>Clear all</button>}
+    </div>
+  );
+}
+```
+
+## How it's used
+
+- **Artifex** — sits above the gallery grid; filters sync into the URL so deep-linking a specific filter state works
+- **Pattern generalizes** to any list view with mixed text-search and structured filters
+
+## Gotchas
+
+- **Debounce the text input.** Firing a fetch on every keystroke hammers the server and flickers the results. 200-300ms debounce is the sweet spot.
+- **Filter pills are optional; keep them discoverable.** Don't hide them behind a "More" menu — users who don't know what filters exist won't click to find them.
+- **Clear all.** Always provide a single-click escape. Users do get stuck.
+- **URL sync.** Filter state in the URL (`?model=sd_xl&tag=landscape`) so refreshes preserve state and links share views. One-way (filters → URL) is fine; bidirectional (URL → filters) is needed for deep-linked shares to work.
+- **Active filter count.** A small badge showing "3 active filters" reminds users why results are narrow. "Why isn't my image showing up" is often the answer.
+- **Keyboard support.** Cmd/Ctrl+K focuses the search input; Escape clears it. These two shortcuts cover 80% of power-user usage.
+- **Pills overflow on mobile.** Wrap to multiple lines, or scroll horizontally. Don't truncate or hide.
+- **FTS5 query syntax.** `sqlite-fts5-search` supports `AND`, `OR`, `NOT`, phrase `"exact"`, prefix `term*`. Either expose these to users (complex) or wrap simple user input into a safe FTS query (sanitize then quote).
+
+## See also
+
+- [patterns/sqlite-fts5-search](../../patterns/sqlite-fts5-search/) — the engine
+- [components/masonry-grid](../masonry-grid/) — what it filters

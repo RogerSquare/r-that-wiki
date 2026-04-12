@@ -1,0 +1,69 @@
+---
+title: Collections page
+description: Grid of user-created collections. Each tile shows a cover image and item count.
+---
+
+import CollectionsPage from '../../../examples/collections-page.tsx';
+
+> **Source:** [artifex/frontend/src/components/CollectionsPage.jsx](https://github.com/RogerSquare/Artifex/blob/main/frontend/src/components/CollectionsPage.jsx)
+> **Category:** View
+
+**Collections page** — the index of user-created groupings. One tile per collection, showing the cover image, name, and item count. Click a tile → [collection detail](../collection-detail/) page.
+
+## What it is
+
+A responsive CSS grid of collection cards. Each card: thumbnail (usually the newest image in the collection or a user-chosen cover), name, item count. An "Add collection" button in the header creates new ones.
+
+## Why it exists
+
+A flat gallery works for "my photos, all of them". Over time, users want to group: `Landscapes`, `Studio tests`, `Sent to LinkedIn`. Collections are the shoebox — same images, multiple organizations, not mutually exclusive.
+
+## Live
+
+<div style={{ padding: 20, background: '#000', borderRadius: 8 }}>
+  <CollectionsPage client:load />
+</div>
+
+## Shape
+
+```jsx
+export default function CollectionsPage({ collections }) {
+  return (
+    <div className="collections">
+      <header>
+        <h2>Collections</h2>
+        <button onClick={openNewCollection}>+ New collection</button>
+      </header>
+      <div className="grid">
+        {collections.map(c => (
+          <Link key={c.id} to={`/collections/${c.id}`} className="tile">
+            <img src={c.cover_url || placeholder} />
+            <h3>{c.name}</h3>
+            <p>{c.image_count} images</p>
+          </Link>
+        ))}
+      </div>
+    </div>
+  );
+}
+```
+
+## How it's used
+
+- **Artifex** — `/collections` route; linked from the sidebar
+- **Pattern generalizes** to any album/folder/playlist index view
+
+## Gotchas
+
+- **Empty state matters.** A new account has zero collections. The grid shouldn't be "nothing" — render a prompt/help: "Collections group related images. Click + to make your first."
+- **Cover image choice.** Default to "newest image in collection" — self-updating and usually looks right. Let the user pin a specific one if they prefer.
+- **Item count accuracy.** Cached counts go stale. Refetch on the collections page load, or push updates via socket.
+- **Drag images onto tiles to add.** Natural interaction: drag an image from the gallery onto a collection tile. Shows a drop target, calls the add-to-collection API.
+- **Pagination for power users.** Some users have 200+ collections. Either paginate or give a search/filter input at the top.
+- **Delete is scary.** Deleting a collection shouldn't delete the images in it. Confirm clearly: "Delete the collection? Images stay in your gallery."
+- **Reordering.** Drag tiles to reorder; order persists per user. Default ordering: most-recently-updated first.
+
+## See also
+
+- [components/collection-detail](../collection-detail/) — what a tile click opens
+- [components/masonry-grid](../masonry-grid/) — the layout inside a collection

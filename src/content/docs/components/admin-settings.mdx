@@ -1,0 +1,47 @@
+---
+title: Admin settings
+description: "Tabbed admin panel: users, ML job queues, federation peers. Each tab is a different concern, same shape."
+---
+
+import AdminSettings from '../../../examples/admin-settings.tsx';
+
+> **Source:** [artifex/frontend/src/components/AdminSettings.jsx](https://github.com/RogerSquare/Artifex/blob/main/frontend/src/components/AdminSettings.jsx)
+> **Category:** Admin view
+
+**Admin settings** — the catch-all admin surface, organized into three tabs for Artifex's three admin concerns: users (roles, disable, purge), job queues (tag / caption / NSFW stats + retry), and federation (peer list + status).
+
+## What it is
+
+A tab strip at the top, a tab-specific panel below. Each panel is independent — own data fetch, own action handlers, no cross-tab state. The URL encodes the active tab (`/admin?tab=users`) so back/forward navigation works and deep-links do too.
+
+## Why it exists
+
+Admin UIs tend to sprawl: one route per concern, a sidebar that looks like Rails scaffolding, no cohesion. Artifex collapses everything into one page with tabs because each concern is small — users fit on a screen, job stats fit on a screen, peer list fits on a screen. Tabs beat routes when each "page" is half a screen.
+
+## Live
+
+<div style={{ padding: 16, background: '#020617', borderRadius: 8 }}>
+  <AdminSettings client:load />
+</div>
+
+## How it's used
+
+- **Artifex** — `/admin` route, gated behind `user.role === 'admin'`
+- **Pattern generalizes** to any self-hosted app with a handful of admin concerns
+
+## Gotchas
+
+- **Permission check on the route, not the tab.** A non-admin shouldn't see the UI even in a loading state. Return 403 or redirect before the component mounts.
+- **Actions need confirmation.** "Disable user", "Purge data", "Reset federation" — any destructive action needs a confirm modal, not a single click.
+- **Polling for job stats.** The jobs tab wants to show fresh numbers. Poll every 5s *while that tab is active*; stop polling when the tab changes. Otherwise every admin has a tab eating CPU in the background.
+- **Pagination on the users tab.** 50 users fit; 5000 don't. Page size of 50 with prev/next is plenty.
+- **Audit logging.** Every admin action should write to an audit log (see [audit-log-append-only-json](../../patterns/audit-log-append-only-json/)). "Who disabled this user, when, why" is a question that will come up.
+- **Retry failed jobs.** The jobs tab's "Retry failed" button is a blunt instrument — it re-queues every failed job in that category. Combine with a filter if individual retries are useful.
+- **Peer status.** Federation tab shows online/offline per peer. The "last seen" is computed from the peer's last successful federation call. Cache aggressively — don't ping every peer on every render.
+
+## See also
+
+- [projects/artifex](../../projects/artifex/)
+- [patterns/audit-log-append-only-json](../../patterns/audit-log-append-only-json/)
+- [patterns/sqlite-job-queue](../../patterns/sqlite-job-queue/) — source of the job stats
+- [patterns/federation-pull-and-proxy](../../patterns/federation-pull-and-proxy/) — what the federation tab manages
