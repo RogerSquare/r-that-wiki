@@ -1,0 +1,119 @@
+---
+title: No frontend framework
+description: Plain HTML, plain CSS, plain JS. When it's the right call, and when it's a trap.
+---
+
+> **Source:** [dockview/public/](https://github.com/RogerSquare/dockview) · [gh-collab-manager/public/](https://github.com/RogerSquare/gh-collab-manager)
+> **Category:** Pattern — architecture
+
+**No framework** — the frontend is three files: `index.html`, `style.css`, `app.js`. No build step, no node_modules, no bundler. Deliberately chosen for single-user admin dashboards where React would pay a complexity tax for no real benefit.
+
+## What it is
+
+A frontend written entirely with the platform: HTML for structure, CSS for style, vanilla JS (fetch + DOM) for interactivity. No transpilation, no JSX, no virtual DOM. The browser reads the files as-is.
+
+Served statically by Express or nginx. Deployment is `rsync public/ /var/www/app/`.
+
+## Why it exists
+
+**The problem:** Every web-adjacent project defaults to React + Vite + Tailwind. That's the right answer for 90% of web apps. For the other 10% — single-user admin panels, homelab dashboards, tool UIs — you're paying framework setup costs for zero framework benefits.
+
+React solves: component reuse across a large team, state management across many views, SSR for SEO, type-safety with TS, rich ecosystem. A dockview-style dashboard needs none of those.
+
+**The fix:** ship the platform. HTML/CSS/JS is genuinely fine for small UIs.
+
+## When this works
+
+- **Single user, single browser.** You know the target browser; you're not shipping to unknown clients.
+- **Small surface area.** A dashboard with 5-10 "views" fits in a couple hundred lines of JS.
+- **Live-reload not required.** You refresh the tab after editing. Acceptable for dev.
+- **No state across views.** Each page is self-contained; no global store.
+- **Zero build cost is the point.** Deploy is `rsync`; dev is `python -m http.server` or similar.
+
+## When this doesn't work
+
+- **Complex state** — multiple views depend on the same object, edits in one update others. You'll reinvent Redux poorly.
+- **Many developers** — the discipline to not import Nth dependency erodes fast.
+- **Growth horizon** — if the UI is going to double in a year, pay the framework tax now rather than rewriting from vanilla later.
+- **Type safety matters** — vanilla JS is quick but loose. Ambitious UIs want TS.
+
+## Shape
+
+```
+dockview/
+├── public/
+│   ├── index.html        # structure + inline script tag at the bottom
+│   ├── style.css         # CSS custom properties, grid, flex
+│   └── app.js            # fetch, render, subscribe
+└── src/
+    └── server.ts         # serves public/, exposes /api/*
+```
+
+`index.html` is the app:
+
+```html
+<!doctype html>
+<html>
+<head>
+  <title>dockview</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header><h1>dockview</h1><span id="status"></span></header>
+  <main>
+    <section id="containers"></section>
+    <section id="metrics"></section>
+  </main>
+  <script src="/app.js" defer></script>
+</body>
+</html>
+```
+
+`app.js` is the entire client:
+
+```js
+// Fetch + render on load
+fetch('/api/containers').then(r => r.json()).then(renderContainers);
+
+// Subscribe to live updates
+const socket = io();
+socket.on('container:update', c => updateOne(c));
+socket.on('metrics', m => renderMetrics(m));
+
+function renderContainers(list) {
+  const el = document.getElementById('containers');
+  el.innerHTML = list.map(c => `
+    <div class="card" data-id="${c.id}">
+      <h3>${c.name}</h3>
+      <span class="status ${c.state}">${c.state}</span>
+      <button onclick="restartContainer('${c.id}')">Restart</button>
+    </div>
+  `).join('');
+}
+
+async function restartContainer(id) {
+  await fetch(`/api/containers/${id}/restart`, { method: 'POST' });
+}
+```
+
+## How it's used
+
+- **dockview** — the whole frontend
+- **gh-collab-manager** — same approach; ~700 lines of JS for the full admin
+- **Pattern generalizes** to any internal tool where framework setup doesn't pay off
+
+## Gotchas
+
+- **Templating via `innerHTML` is an XSS vector.** User-generated content + `innerHTML` = trivial XSS. If any string in your template comes from user input, escape it first. For dashboards showing system state, usually not an issue. For anything with user input, use `textContent` or build nodes.
+- **Event delegation for dynamic lists.** Don't wire `onclick` per card on each render; one click listener on the parent delegates via `event.target`. Cleaner DOM, fewer listeners.
+- **CSS custom properties are your component library.** Declare a theme at the root; every "component" (card, button, badge) uses the variables. One file, no specifier hell.
+- **State in data-attributes.** `<div data-id="..." data-state="...">` — reads like HTML, updates without re-rendering the whole parent.
+- **Module scripts are nice.** `<script type="module" src="app.js">` gives you `import` without a bundler. Keeps code organized for medium-size apps.
+- **Dev convenience.** A one-line static-file server (`python -m http.server`, `caddy file-server`, or just `npx serve`) is enough for local dev.
+- **Hot reload.** You don't have it. Refresh the tab. For the size of app this pattern targets, that's fine.
+- **Drift to framework happens quietly.** "Just this one state library...", "Just a small router...", "Just a templating engine...". At some point you've built half of React. Notice; either accept and migrate, or push back.
+
+## See also
+
+- [projects/dockview](../../projects/dockview/) · [projects/gh-collab-manager](../../projects/gh-collab-manager/)
+- [components/progress-bar-vanilla-js](../../components/progress-bar-vanilla-js/) — what one of these "no-framework components" looks like

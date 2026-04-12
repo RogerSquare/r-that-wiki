@@ -1,0 +1,77 @@
+---
+title: Progress bar (vanilla JS version)
+description: DOM + CSS, no library. A `<div>` with a fill child, width updated via inline style. Smooth because CSS transitions do the work.
+---
+
+import ProgressBarVanillaJS from '../../../examples/progress-bar-vanilla-js.tsx';
+
+> **Source:** [dockview/public/app.js](https://github.com/RogerSquare/dockview) — the meter rendering
+> **Category:** Control
+
+**Progress bar (vanilla)** — two divs and a CSS transition. Update the fill's `width` property; the browser animates the change. No frame loop, no RAF, no React re-renders.
+
+## Live
+
+Values update every 1.5s with randomized deltas; transitions interpolate.
+
+<ProgressBarVanillaJS client:load />
+
+## DOM version
+
+```html
+<div class="meter">
+  <div class="fill" style="width: 42%"></div>
+</div>
+```
+
+```css
+.meter {
+  height: 8px;
+  border-radius: 4px;
+  background: #1e293b;
+  overflow: hidden;
+}
+.meter .fill {
+  height: 100%;
+  background: #60a5fa;
+  transition: width 400ms ease-out;
+}
+```
+
+Updating it:
+
+```js
+const fill = document.querySelector('.meter .fill');
+fill.style.width = `${percent}%`;        // CSS transition animates to the new value
+```
+
+## Why this instead of a component library
+
+- **Zero install cost.** You're not deciding whether to add Recharts for three meters.
+- **CSS transitions are free.** Browser does the interpolation; you just set the target.
+- **Tiny bundle.** The markup is 2 lines, the CSS is ~8 lines, the update logic is 1 line.
+- **Printable.** Browser's Print preview shows the filled bar correctly (some canvas-based libraries don't).
+
+## When to reach for a library
+
+- **Multi-series charts** — sparklines, stacked bars, donut segments. Write them once, give up; use Recharts.
+- **Hover tooltips.** Implementable in vanilla but tedious.
+- **Legends, axes, gridlines.** Not these primitives' job.
+
+Rule of thumb: a single value progress bar is always vanilla. Two series is borderline. Three+ series → library.
+
+## Gotchas
+
+- **Easing curves matter.** `ease-out` feels natural for progress bars. `linear` feels robotic. `ease-in` feels sluggish.
+- **Transition duration vs update rate.** If you update every 1.5s with a 400ms transition, you see smooth motion. Transitions longer than the update interval compound and look weird.
+- **Animation on re-order.** If the bar's container reflows, CSS transitions can run on the parent too, looking wrong. Scope transitions explicitly to `width` / `background`.
+- **Content shift.** If the percentage text next to the bar changes from "1%" to "100%", the numeric text width changes. Reserve space with `min-width` + `text-align: right`, or use `font-variant-numeric: tabular-nums` so digit widths match.
+- **Color encoding.** "Green = good, red = bad" is only true for some metrics (disk low good / CPU low good). Match semantics: `blue` for neutral metrics, `amber` for "getting full", `red` only when past a threshold.
+- **Percentage precision.** `42.37%` has no meaning at a glance. Truncate to 0-1 decimal places.
+- **Indeterminate state.** For "working, unknown progress", animate the fill left-to-right continuously. Different mode; different CSS animation.
+
+## See also
+
+- [components/container-card](../container-card/) — where this meter is used
+- [components/progress-bar-subpixel](../progress-bar-subpixel/) — the terminal variant with sub-character precision
+- [patterns/no-frontend-framework](../../patterns/no-frontend-framework/)

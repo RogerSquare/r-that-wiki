@@ -1,0 +1,81 @@
+---
+title: Read host metrics from inside a container
+description: Mount `/proc` and `/sys` from the host; `systeminformation` reads them like it's running on the host. The alternative is running on the host, which defeats the point of a container.
+---
+
+> **Source:** dockview's docker-compose.yml — host-metrics configuration
+> **Category:** Snippet — Docker / ops
+
+**Host metrics from container** — if your containerized dashboard shows CPU, memory, and disk, those numbers reflect the *container's* limits by default, not the *host's*. Mount the host's `/proc` and `/sys` read-only into the container and point `systeminformation` (or similar) at them.
+
+## The problem
+
+Inside a container, `/proc/meminfo` reports the container's cgroup memory limits, not the host's 16GB of RAM. `df -h` shows the container filesystem, not the disk the host is using. Your dashboard says "52 MB of 128 MB used" which is the container, not the machine.
+
+## The fix — docker-compose.yml
+
+```yaml
+services:
+  dockview:
+    image: dockview:latest
+    ports: ["8080:3000"]
+    volumes:
+      # Docker control
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # Host metrics — mount into non-standard paths
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    environment:
+      # Tell systeminformation where to look
+      - SI_HOST_PROC=/host/proc
+      - SI_HOST_SYS=/host/sys
+      - SI_HOST_ROOTFS=/rootfs
+    restart: unless-stopped
+```
+
+The `/host/proc` path is a convention — you could use `/hostproc` or anything else. Don't mount over `/proc` directly; that breaks container internals.
+
+## In the app
+
+```ts
+import si from 'systeminformation';
+
+// systeminformation reads SI_HOST_* env vars automatically
+const cpu = await si.currentLoad();     // host CPU load
+const mem = await si.mem();              // host memory
+const disk = await si.fsSize();         // host disk usage
+```
+
+For libraries that don't honor the env var, set the path explicitly:
+
+```ts
+import fs from 'fs';
+const meminfo = fs.readFileSync('/host/proc/meminfo', 'utf8');
+// parse it yourself
+```
+
+## What each mount gives you
+
+| Mount | Provides |
+|---|---|
+| `/proc:/host/proc:ro` | CPU, memory, processes, network sockets, uptime |
+| `/sys:/host/sys:ro` | Block devices, sensors, temperature, battery |
+| `/:/rootfs:ro` | Disk usage across the actual host filesystems |
+| `/var/run/docker.sock` | Docker control (separate concern) |
+
+## Gotchas
+
+- **`:ro` is non-negotiable.** Mount read-only. You want stats, not the ability to modify the host's `/proc`.
+- **Don't mount over existing paths.** `/proc:/proc:ro` breaks container internals (systemd, libc, node:fs all expect `/proc` to be the container's). Use `/host/proc` or similar.
+- **`/rootfs` is intrusive.** You're mounting the entire host filesystem read-only into the container. Anyone who gets into the container sees every file on the host. For a personal homelab behind a firewall, accept it; for a multi-tenant host, don't.
+- **Not every stat works.** Some `systeminformation` calls read from places you haven't mounted (e.g. `lsblk` binary, `nvidia-smi`). For those, either install the binary in the container or live without that stat.
+- **Container restart behavior.** If you restart the container, the mount point is fresh each time. No persistent weirdness.
+- **Selinux / AppArmor.** On hosts with strict security policy, read-only mounts from sensitive paths may be denied. Error manifests as permission denied reading files. Add container labels or temporarily disable.
+- **Uptime.** `/host/proc/uptime` gives host uptime. Container uptime (from inside `/proc/1/stat` without mounts) is "how long has the container been running". Pick which one you actually want to display.
+- **Network metrics.** `/proc/net/dev` shows the container's network interfaces by default. Host network requires `network_mode: host` or additional mounts, and loses container network isolation. Usually not worth it.
+
+## See also
+
+- [patterns/docker-socket-as-api](../../patterns/docker-socket-as-api/) — the sibling "access the host from a container" pattern
+- [projects/dockview](../../projects/dockview/) — uses both this and the socket mount

@@ -1,0 +1,86 @@
+---
+title: Container card
+description: One tile per Docker container — name, image, state dot, CPU and memory meters, action buttons.
+---
+
+import ContainerCard from '../../../examples/container-card.tsx';
+
+> **Source:** [dockview/public/app.js](https://github.com/RogerSquare/dockview) — static DOM rendered from `/api/containers` response
+> **Category:** Composite component
+
+**Container card** — the main dockview dashboard unit. Shows a single Docker container's state, resource usage, and actions (start / stop / restart / logs). Multiple cards in a responsive grid.
+
+## What it is
+
+A grid of cards. Each card: colored state dot, container name, image tag, uptime, CPU/memory meters, action buttons. The real dockview renders these with plain DOM; the wiki demo uses React for the same shape.
+
+## Live
+
+<ContainerCard client:load />
+
+## Vanilla DOM version
+
+```js
+function renderContainer(c) {
+  const el = document.createElement('div');
+  el.className = `card state-${c.state}`;
+  el.dataset.id = c.id;
+  el.innerHTML = `
+    <header>
+      <span class="dot"></span>
+      <span class="name">${escape(c.name)}</span>
+      <span class="uptime">${c.uptime}</span>
+    </header>
+    <code class="image">${escape(c.image)}</code>
+    <div class="meter cpu"><div class="fill" style="width:${c.cpu}%"></div></div>
+    <div class="meter mem"><div class="fill" style="width:${c.mem.pct}%"></div></div>
+    <footer>
+      <button data-action="start">Start</button>
+      <button data-action="stop">Stop</button>
+      <button data-action="restart">Restart</button>
+      <button data-action="logs">Logs</button>
+    </footer>
+  `;
+  return el;
+}
+
+// Event delegation at the parent — one listener, any number of cards
+document.getElementById('containers').addEventListener('click', (e) => {
+  const button = e.target.closest('button');
+  const card = e.target.closest('.card');
+  if (!button || !card) return;
+  const action = button.dataset.action;
+  const id = card.dataset.id;
+  handleAction(action, id);
+});
+```
+
+## Why each piece is this way
+
+- **State dot with subtle glow.** `box-shadow: 0 0 6px <color>` on running. Silent signal; no text needed.
+- **Meters, not numbers alone.** Visual bars are scannable across 10+ cards; "87%" requires reading.
+- **Uptime top-right.** Second most important value after state; sits in the corner where eyes land next.
+- **Action row at the bottom.** Constant action surface means users don't have to hunt per card.
+- **Image tag in monospace.** It's an identifier; monospace reads as one.
+
+## How it's used
+
+- **dockview** — the whole dashboard is a grid of these
+- **Pattern generalizes** to any "grid of status + actions" UI: pipelines, services, workers, workflow runs
+
+## Gotchas
+
+- **State-transition animation.** Going from "stopped" (gray) to "running" (green with glow) should be a 200ms color fade, not instant. Helps the eye follow.
+- **Actions should be optimistic.** Click "Stop", card immediately shows the "stopping" state; rollback if the API rejects.
+- **Don't render meters when stopped.** 0% meters everywhere look noisy. Replace with "—" text.
+- **Long names truncate with ellipsis.** `white-space: nowrap; overflow: hidden; text-overflow: ellipsis;` plus `min-width: 0` on the flex child.
+- **Responsive grid.** `grid-template-columns: repeat(auto-fit, minmax(260px, 1fr))` — one line, full responsive behavior.
+- **Update granularity.** Full card re-render on every metric tick is wasteful for 20+ containers. Update only the changed data-attributes (`data-cpu`, `data-mem`) and have CSS drive the visual.
+- **Destructive actions need confirmation.** "Stop" on a load-bearing container can ruin a day; confirm or add an undo.
+- **Logs open in a modal or new tab.** Inline logs on a card are both small and long — pick the wrong problem to solve.
+
+## See also
+
+- [projects/dockview](../../projects/dockview/)
+- [patterns/no-frontend-framework](../../patterns/no-frontend-framework/)
+- [components/progress-bar-vanilla-js](../progress-bar-vanilla-js/) — the meter technique above

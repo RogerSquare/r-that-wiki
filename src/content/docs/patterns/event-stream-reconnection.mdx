@@ -1,0 +1,120 @@
+---
+title: Event-stream reconnection with backoff
+description: Long-lived HTTP/WebSocket streams drop. Reconnect with exponential backoff, reset on success, don't spin the server on permanent failures.
+---
+
+> **Source:** [dockview/src/docker.ts](https://github.com/RogerSquare/dockview) — Docker events stream
+> **Category:** Pattern — resilience
+
+**Event-stream reconnection** — any long-lived connection (WebSocket, Server-Sent Events, `docker events`, SSH, WebRTC) drops. The client has to reconnect. Do it with exponential backoff capped at a ceiling, reset on successful connect, surface permanent failures instead of loop-retrying forever.
+
+## What it is
+
+Wrap the connection attempt in a function. On open, reset the delay. On close or error, wait `delay`, then try again with `delay *= 2`. Cap at some maximum (30s is common). Count failures; after N, stop and surface an error to the user.
+
+## Shape
+
+```ts
+const MAX_DELAY_MS = 30_000;
+const MAX_FAILURES = 10;          // cap consecutive failures
+
+class EventStream {
+  private delay = 1000;
+  private failures = 0;
+  private stopped = false;
+  private ev: AbortController | null = null;
+
+  constructor(private url: string, private onEvent: (e: any) => void, private onFailure: (err: Error) => void) {}
+
+  connect() {
+    if (this.stopped) return;
+    this.ev = new AbortController();
+
+    fetch(this.url, { signal: this.ev.signal })
+      .then(res => this.handleResponse(res))
+      .catch(err => this.handleDrop(err));
+  }
+
+  private async handleResponse(res: Response) {
+    if (!res.ok || !res.body) {
+      return this.handleDrop(new Error(`stream failed: ${res.status}`));
+    }
+    // Successful connect: reset delay and failure counter
+    this.delay = 1000;
+    this.failures = 0;
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    while (!this.stopped) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const chunk = decoder.decode(value, { stream: true });
+      for (const line of chunk.split('\n').filter(Boolean)) {
+        try { this.onEvent(JSON.parse(line)); } catch {}
+      }
+    }
+    this.handleDrop(new Error('stream ended'));
+  }
+
+  private handleDrop(err: Error) {
+    if (this.stopped) return;
+    this.failures++;
+
+    if (this.failures >= MAX_FAILURES) {
+      this.onFailure(err);
+      return;
+    }
+
+    setTimeout(() => this.connect(), this.delay);
+    this.delay = Math.min(this.delay * 2, MAX_DELAY_MS);
+  }
+
+  stop() {
+    this.stopped = true;
+    this.ev?.abort();
+  }
+}
+```
+
+Usage:
+
+```ts
+const stream = new EventStream(
+  '/api/events',
+  (event) => updateUI(event),
+  (err) => showOfflineBanner(err.message),
+);
+stream.connect();
+
+// On unmount / logout:
+stream.stop();
+```
+
+## Why the details matter
+
+- **Reset on success.** If you don't, a brief hiccup followed by a stable connection still has delay at the last value — leading to slow reconnects on the *next* drop.
+- **Cap the delay.** Unlimited exponential means users with flaky networks eventually wait 20 minutes between retries. 30s caps the pain.
+- **Cap the retries.** Some failures are permanent (auth expired, server gone). Infinite retry hammers a dead endpoint and hides the real problem. After N failures, surface.
+- **Jitter.** For a server behind a load balancer with thousands of clients, synchronized reconnects are a thundering herd. Add `Math.random() * delay` to spread them out. For a personal homelab with one client, jitter is optional.
+
+## How it's used
+
+- **dockview** — subscribes to `docker events` for container state changes
+- **Atrium** — Socket.IO handles this automatically (reconnect-with-backoff is built in); pattern is useful when writing your own
+- **Pattern generalizes** to any long-lived streaming connection
+
+## Gotchas
+
+- **Don't reconnect on auth errors.** 401/403 are permanent until the user re-authenticates. Stop, surface, let the user log in.
+- **Stream vs poll.** Streams are great when events are frequent. For events every 10 minutes, polling is simpler and more reliable.
+- **Heartbeat.** The server should send a keepalive message every 30s. Without it, NAT devices silently drop "idle" connections and your client doesn't know.
+- **Decoded bytes can span chunks.** `TextDecoder({ stream: true })` handles multi-byte characters split across chunks. Without `stream: true`, you get garbage on non-ASCII.
+- **Line parsing is fragile.** If your server sends incomplete lines mid-chunk, naive `split('\n')` drops events. Buffer until a newline arrives.
+- **`AbortController`** lets you cancel the in-flight fetch on unmount. Without it, the fetch keeps running against an unmounted component.
+- **Browser `EventSource` does most of this for you.** If the server supports SSE, use `new EventSource(url)` — reconnect with backoff is automatic. This pattern matters when you can't use SSE (raw JSON streams, custom protocols, WebSockets).
+- **Document `onFailure` semantics.** Is it "we gave up" (stopped for good) or "we're retrying but wanted to let you know"? Either is defensible; say which.
+
+## See also
+
+- [patterns/socket-io-live-state-fanout](../socket-io-live-state-fanout/) — when Socket.IO handles this for you
+- [projects/dockview](../../projects/dockview/) — primary consumer

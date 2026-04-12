@@ -1,0 +1,106 @@
+---
+title: dockerode — 5 idioms that cover 90% of Docker control
+description: List, get, start/stop/restart, logs, events. The five calls that let a Node app drive Docker.
+---
+
+> **Source:** [dockview/src/docker.ts](https://github.com/RogerSquare/dockview) · `dockerode`
+> **Category:** Snippet — Docker
+
+**dockerode idioms** — the five most useful calls for Node apps controlling Docker. Between them you cover container listing, lifecycle, logs, and real-time events. Everything else in the Docker Engine API is an optimization on top of these.
+
+## Setup
+
+```ts
+import Docker from 'dockerode';
+
+const docker = new Docker();   // auto-detects /var/run/docker.sock
+```
+
+On Windows/macOS or with custom socket paths: `new Docker({ socketPath: '/path/to/docker.sock' })`.
+
+## 1. List containers
+
+```ts
+const containers = await docker.listContainers({ all: true });
+// [{ Id: 'abc...', Names: ['/my-container'], Image: 'node:22', State: 'running', ... }]
+```
+
+`{ all: true }` includes stopped containers; without it you get only running. For large deployments add `{ limit: 50 }`.
+
+## 2. Get a handle to one container
+
+```ts
+const container = docker.getContainer('abc123');   // id or name
+```
+
+Returns immediately — no network call. All subsequent operations (`start`, `stop`, `logs`) happen on this handle.
+
+## 3. Lifecycle operations
+
+```ts
+await container.start();
+await container.stop({ t: 10 });    // t = seconds before SIGKILL
+await container.restart();
+await container.remove({ force: true, v: true });  // v = remove volumes
+```
+
+Each returns when Docker has acknowledged; the actual state transition may be async. Poll or subscribe to events to wait for it.
+
+## 4. Logs (one-shot or streaming)
+
+One-shot, last N lines:
+
+```ts
+const buf = await container.logs({
+  stdout: true, stderr: true,
+  tail: 100,
+  timestamps: true,
+});
+// buf is a Buffer with Docker's multiplexed format — see "Gotchas"
+```
+
+Streaming live:
+
+```ts
+const stream = await container.logs({
+  stdout: true, stderr: true,
+  follow: true,
+  tail: 0,              // 0 = only new lines
+});
+stream.on('data', chunk => console.log(chunk.toString('utf8')));
+```
+
+Close the stream with `stream.destroy()` when you're done or the connection leaks.
+
+## 5. Subscribe to events
+
+```ts
+docker.getEvents({ filters: { type: ['container'] } }, (err, stream) => {
+  if (err) return handleErr(err);
+  stream.on('data', raw => {
+    const event = JSON.parse(raw.toString());
+    // { Action: 'start', Actor: { ID: '...', Attributes: {...} }, ... }
+  });
+  stream.on('error', handleErr);
+  stream.on('end', () => reconnect());   // streams drop; see event-stream-reconnection pattern
+});
+```
+
+## Gotchas
+
+- **Docker multiplexes stdout + stderr in logs.** Without `demuxStream`, you get a single buffer with 8-byte headers between chunks. Use `docker.modem.demuxStream(stream, process.stdout, process.stderr)` or strip headers manually. In one-shot mode the Buffer is the raw multiplexed format.
+- **Stream drops.** Event and log streams close on Docker daemon restarts. Implement reconnection (see [event-stream-reconnection](../../patterns/event-stream-reconnection/)).
+- **`restart()` is not `stop` + `start`.** `restart()` is Docker's atomic restart that preserves container state. Stop-then-start creates a potential window where the container is fully absent.
+- **`force: true` on remove.** Forces SIGKILL on a running container before removing. Useful for cleanup scripts; dangerous for anything you care about.
+- **Timeouts.** `stop({ t: 10 })` — Docker SIGTERMs, waits 10s, then SIGKILLs. Match to your app's graceful shutdown time.
+- **`docker.ping()` for health checks.** Use to verify the daemon is reachable before doing real work.
+- **`socketPath` on Windows.** `\\.\pipe\docker_engine` is the named pipe. dockerode's defaults handle it if the env is set up.
+- **Filters use Docker's filter language.** `{ filters: { status: ['running'] } }` is an object that gets JSON-stringified in the request. Some API versions want `JSON.stringify(filters)` manually; check your dockerode version.
+- **Pagination doesn't exist for containers.** `listContainers` returns everything matching; at 500+ containers, filter server-side with `filters`.
+- **Auth isn't dockerode's problem.** The Docker Engine API has no auth layer — it trusts whoever can connect to the socket. Restrict socket access at the OS level.
+
+## See also
+
+- [patterns/docker-socket-as-api](../../patterns/docker-socket-as-api/) — the underlying "mount the socket" pattern
+- [patterns/event-stream-reconnection](../../patterns/event-stream-reconnection/) — for the log and event streams
+- [projects/dockview](../../projects/dockview/)
