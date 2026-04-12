@@ -1,0 +1,68 @@
+---
+title: History snapshots on every edit
+description: Every time a file is saved, first save a timestamped copy to a `history/` directory. Restore from any point.
+---
+
+> **Source:** [atrium/backend/history/](https://github.com/RogerSquare/atrium) — via the save middleware
+> **Category:** Pattern — data recovery
+
+**History snapshots on edit** — before overwriting a file, copy the previous version to a `history/` sibling directory with a timestamp suffix. Lightweight version history you can list, diff, and restore from without needing git on the data directory.
+
+## What it is
+
+A write-through wrapper: `saveWithHistory(filePath, content)` copies the existing file (if any) to `history/<timestamp>.<basename>` before writing the new content in place. No library, no complex rotation — just one copy per save.
+
+## Why it exists
+
+**The problem:** Markdown-as-database records get edited constantly (status changes, comments, content updates). Lose data and the only recourse is:
+
+1. **Restore a backup** — coarse-grained; probably not from this morning
+2. **Ask the user to remember** — useless
+3. **Git** — great if the data is tracked, but app-mutable data typically isn't
+
+**The fix:** one-syscall cost per save for durable per-edit history. Listing history is a directory scan; restoring is a rename. Git-quality recovery without git.
+
+## Shape
+
+```js
+// backend/lib/history.js
+const HISTORY_DIR = path.join(TASKS_DIR, '..', 'history');
+
+function saveWithHistory(filePath, newContent, author) {
+  if (!fs.existsSync(HISTORY_DIR)) fs.mkdirSync(HISTORY_DIR, { recursive: true });
+
+  // Snapshot existing content before overwrite
+  if (fs.existsSync(filePath)) {
+    const timestamp = Date.now();
+    const base = path.basename(filePath);
+    const snapshot = path.join(HISTORY_DIR, `${base}.${timestamp}.${author || 'unknown'}.md`);
+    fs.copyFileSync(filePath, snapshot);
+  }
+
+  fs.writeFileSync(filePath, newContent, 'utf8');
+}
+
+// API surface:
+// GET  /api/tasks/:id/history          → list snapshots
+// POST /api/tasks/:id/history/:ts/restore → copy snapshot over live file
+```
+
+## How it's used
+
+- **Atrium** — every task file save goes through `saveWithHistory`; history directory accumulates one snapshot per edit
+- **Pattern generalizes** to any edit-heavy file-based store: docs, config, drafts
+
+## Gotchas
+
+- **Growth is linear with edit volume.** A chatty task can accumulate hundreds of snapshots. Add a retention policy — keep the last N per file, or keep everything for 30 days, then prune.
+- **Filename encoding is load-bearing.** Embed the original basename, timestamp, and (optionally) the author in the snapshot filename. The UI lists these; each token should be grep-friendly.
+- **Copy before write, not after.** Write-then-copy loses the pre-edit state if the write fails. Copy-then-write means a failed save leaves the snapshot as the "would-have-been-overwritten" version, which is fine.
+- **Don't snapshot reads.** The hook belongs on save paths only. Wrapping every file access with this triples disk IO and creates nonsense snapshots.
+- **Atomic restore.** Restoring means copying a snapshot over the live file. Use `copyFileSync` (atomic on most filesystems) and also `saveWithHistory` to snapshot the *current* state before restoring — so the restore itself is reversible.
+- **Size bound per snapshot.** No-op — snapshots are full file copies. For tasks (small markdown files) this is irrelevant. For larger data, consider a diff-based store (or just use git).
+- **No compression by default.** Easy to add (`.gz` suffix, `zlib` wrap). Usually not worth the complexity unless you're already past the "should I be using git" question.
+
+## See also
+
+- [patterns/markdown-as-database](../markdown-as-database/) — the substrate
+- [patterns/trash-directory-soft-delete](../trash-directory-soft-delete/) — complementary pattern (delete recovery vs edit recovery)

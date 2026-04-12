@@ -1,0 +1,89 @@
+---
+title: Task modal
+description: Expanded task view with tabs for details, comments, history, and raw YAML.
+---
+
+import TaskModal from '../../../examples/task-modal.tsx';
+
+> **Source:** [atrium/frontend/src/components/TaskModal.jsx](https://github.com/RogerSquare/atrium/blob/main/frontend/src/components/TaskModal.jsx)
+> **Category:** Composite component
+
+**Task modal** — the full-task view opened from a kanban card. Sections are tabbed (details / comments / history / raw) rather than stacked, because a task file frequently has hundreds of lines of comment history and you don't want to scroll past it to edit the title.
+
+## What it is
+
+A modal (or right-side panel depending on the viewport) with a task header and four tabs. Each tab owns a chunk of the task's state; switching tabs doesn't refetch. Edits in any tab save on blur or on an explicit save button (tab-dependent).
+
+## Why it exists
+
+The card shows a task at a glance. The modal is for doing real work on it. Historically Atrium had one big scrolling view that crammed the activity log under the description; once a task accumulated 30+ comments it became unusable. Tabs split the concerns.
+
+## Live
+
+<div style={{ padding: 24, background: '#0b1220', borderRadius: 8 }}>
+  <TaskModal client:load task={{
+    id: 'feat-port-046',
+    title: 'Add Light Mode Toggle to Portfolio Website',
+    status: 'review',
+    priority: 'medium',
+    assignee: 'opus-agent',
+    tags: ['theme', 'light-mode', 'css', 'accessibility'],
+    description: 'Add light mode toggle to portfolio website. Respect prefers-color-scheme on first load. Persist user choice in localStorage. No flash of wrong theme on page load (inline script in head).',
+    activity_log: [
+      { timestamp: '2026-04-12T00:37:39.635Z', action: 'Task created by Unknown User' },
+      { timestamp: '2026-04-12T00:38:16.131Z', action: 'Status changed to IN PROGRESS by opus-agent' },
+      { timestamp: '2026-04-12T00:41:49.134Z', action: 'Status changed to REVIEW by opus-agent' },
+      { timestamp: '2026-04-12T00:44:55.808Z', action: 'Status changed from review to in_progress by opus-agent' },
+      { timestamp: '2026-04-12T01:00:00.000Z', action: 'Status changed from in_progress to review by RogerSquare' },
+    ],
+  }} />
+</div>
+
+## Tabs
+
+- **Details** — description, tags, assignee, files_affected, priority. Inline-editable.
+- **Comments** — the structured nested-bullet comments from agents, plus a markdown editor for new comments.
+- **History** — reverse-chronological `activity_log` entries. Read-only.
+- **Raw** — the underlying YAML frontmatter, formatted. Read-only. Useful for debugging.
+
+## Code sketch
+
+```jsx
+const tabs = ['details', 'comments', 'history', 'raw'];
+
+export default function TaskModal({ task, onSave, onClose }) {
+  const [active, setActive] = useState('details');
+  return (
+    <Modal onClose={onClose}>
+      <Header task={task} />
+      <Tabs tabs={tabs} active={active} onChange={setActive} />
+      <Body>
+        {active === 'details'  && <DetailsTab  task={task} onSave={onSave} />}
+        {active === 'comments' && <CommentsTab task={task} onSave={onSave} />}
+        {active === 'history'  && <HistoryTab  task={task} />}
+        {active === 'raw'      && <RawTab      task={task} />}
+      </Body>
+    </Modal>
+  );
+}
+```
+
+## How it's used
+
+- **Atrium** — click a task card to open; URL-routed at `/task/:id` so links work
+- **Pattern generalizes** to any record-with-history editor (bookmarks, invoices, support tickets)
+
+## Gotchas
+
+- **Tab state belongs to the modal, not the URL.** Putting the active tab in the URL sounds nice but makes the back button behave weirdly (open modal → switch tabs → back exits the modal) unless you're careful with history state.
+- **Save on blur + unsaved-changes warning.** Users expect changes to persist silently. Warn only if they close the modal with dirty fields.
+- **Comments tab is a markdown editor, not an input.** Agent comments have structure (nested bullets). A plain `<textarea>` is fine; a WYSIWYG editor is a trap if the underlying format is markdown.
+- **History is capped by virtualization.** Very long activity logs slow initial render. Render the most recent N entries, with "show older" to load the rest.
+- **Raw tab is debug-only.** Don't make it editable — the backend invariants (see [agent-task-board-protocol](../../patterns/agent-task-board-protocol/)) assume the frontmatter is API-managed, not user-hand-edited.
+- **Modal vs side panel.** On desktop, a right-side panel sits next to the board. On mobile, it's a full-screen modal. One component handling both requires careful CSS; two components share most of their guts.
+
+## See also
+
+- [components/task-card](../task-card/) — the entry point to this modal
+- [components/board](../board/) — the container
+- [patterns/activity-log-in-yaml-frontmatter](../../patterns/activity-log-in-yaml-frontmatter/) — what the History tab renders

@@ -1,0 +1,78 @@
+---
+title: Trash directory for soft delete
+description: Delete = move to a trash folder. Restore = move back. No database column, no tombstones.
+---
+
+> **Source:** [atrium/backend/tasks/.trash/](https://github.com/RogerSquare/atrium) (via `DELETE /api/tasks/:id`)
+> **Category:** Pattern — data lifecycle
+
+**Trash directory soft delete** — when a user deletes a record, don't remove it. Move the file to a sibling `.trash/` directory with a timestamp. Restore is a simple move-back. No `deleted_at` column, no filtering every query.
+
+## What it is
+
+For filesystem-backed storage, soft delete is just a directory move. The "live" view lists files in the main directory; the trash view lists files in `.trash/`. A timestamp in the trashed filename (or a nested directory) avoids collisions if the same id gets created, deleted, re-created, and deleted again.
+
+## Why it exists
+
+**The problem:** Hard delete is scary; users click the button by accident. Classic solutions:
+
+1. **"Are you sure?" confirmation** — helps, but doesn't prevent the committed mistake
+2. **`deleted_at` column** — now every query needs `WHERE deleted_at IS NULL`, and forgetting it leaks deleted records
+3. **External backup** — recoverable but slow, and the user can't self-serve
+
+**The fix:** trash dir. Deletion is cheap (one `rename` syscall). Restoration is cheap. Permanent delete is "empty the trash" — a separate action the user has to explicitly take. No query predicates to remember.
+
+## Shape
+
+```js
+// backend/routes/tasks.js
+const TRASH_DIR = path.join(TASKS_DIR, '.trash');
+
+// DELETE /api/tasks/:id
+router.delete('/:id', (req, res) => {
+  const task = findTaskById(req.params.id);
+  if (!task) return res.status(404).json({ error: 'Not found' });
+
+  if (!fs.existsSync(TRASH_DIR)) fs.mkdirSync(TRASH_DIR, { recursive: true });
+
+  const timestamp = Date.now();
+  const baseName = path.basename(task.filePath);
+  const destName = `${timestamp}.${baseName}`;           // unique even on re-delete
+  const dest = path.join(TRASH_DIR, destName);
+  fs.renameSync(task.filePath, dest);
+
+  res.json({ success: true, trashedAs: destName });
+});
+
+// POST /api/tasks/:id/restore
+router.post('/:id/restore', (req, res) => {
+  const trashed = fs.readdirSync(TRASH_DIR).find(f => f.endsWith(`.${req.params.id}.md`));
+  if (!trashed) return res.status(404).json({ error: 'Not in trash' });
+
+  const originalProject = /* derive from frontmatter or a sidecar */;
+  const dest = path.join(TASKS_DIR, originalProject, `${req.params.id}.md`);
+  fs.renameSync(path.join(TRASH_DIR, trashed), dest);
+
+  res.json({ success: true });
+});
+```
+
+## How it's used
+
+- **Atrium** — deleted tasks go to `backend/tasks/.trash/`; admin UI can list and restore
+- **Pattern generalizes** to any file-backed data: docs, notes, images, config files
+
+## Gotchas
+
+- **Remember where it came from.** If tasks live in subdirectories per project and you trash the file, the trash entry has to remember the original project — either encode it in the trashed filename, or read the frontmatter on restore.
+- **`.trash/` name choice matters.** Leading dot hides it on Unix `ls`. The directory scanner that builds the task list *must* skip hidden dirs or trashed items reappear as live tasks.
+- **Periodic cleanup.** Without a retention policy, trash grows forever. A cron job or admin button that deletes `.trash/*` older than N days is essential.
+- **Concurrency with restore.** Two users restore the same trashed task simultaneously; one succeeds, the other 404s after the rename. Treat the operation as idempotent at the UI layer.
+- **Index invalidation.** If you cache task lists in memory, invalidate on delete *and* on restore. Forgetting the restore side means restored tasks don't show up until server restart.
+- **Permission differences.** `rename` across filesystems fails (`EXDEV`). For Atrium this isn't an issue (both dirs on the same volume). If your trash dir is on a different mount, fall back to copy-then-delete.
+- **`git status` noise.** If the task directory is tracked in git, deleting files pollutes the diff. Atrium sidesteps this by gitignoring `backend/tasks/` entirely.
+
+## See also
+
+- [patterns/markdown-as-database](../markdown-as-database/) — the substrate this pattern operates on
+- [patterns/history-snapshots-on-edit](../history-snapshots-on-edit/) — complements soft-delete for edit-level recovery

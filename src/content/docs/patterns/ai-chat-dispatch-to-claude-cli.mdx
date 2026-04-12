@@ -1,0 +1,97 @@
+---
+title: AI chat dispatch to the Claude CLI
+description: Spawn Claude CLI with structured context for each message, guard against concurrent sessions, stream back to the UI.
+---
+
+> **Source:** [atrium/backend/routes/ai.js](https://github.com/RogerSquare/atrium/blob/main/backend/routes/ai.js) · `POST /api/ai/chat`
+> **Category:** Pattern — agent integration
+
+**AI chat dispatch to Claude CLI** — integrate an AI assistant into your app without calling the LLM API directly. Spawn the local `claude` CLI binary with a task-aware prompt, capture its output, stream it back. Reuses the user's existing Claude subscription, inherits whatever tools and MCP servers are configured locally, no API key in your codebase.
+
+## What it is
+
+An Express route that receives a user message, builds a system prompt with relevant app context (current tasks, project details, user role), spawns `claude "<prompt>"` as a child process, and returns the response. A concurrency guard prevents two chat requests from spawning simultaneous CLI sessions. Timeouts prevent runaway processes.
+
+## Why it exists
+
+**The problem:** Embedding AI assistance in a self-hosted app has three uncomfortable paths:
+
+1. **Call the Anthropic API directly** — requires you to manage an API key, bill usage separately, and replicate tool-use scaffolding you already have in Claude Desktop / Claude Code
+2. **Bundle a local LLM** — heavyweight, lower quality, different capability profile
+3. **Require the user to paste context into a separate Claude window** — defeats the "integrated" part
+
+**The fix:** spawn `claude` from the backend. The user's local subscription pays; whatever context you build is passed as the prompt argument; whatever response comes back is your answer. The CLI already handles streaming, authentication, rate limits, and tool use.
+
+## Shape
+
+```js
+// backend/routes/ai.js
+const { spawn } = require('child_process');
+
+let activeSession = null;   // concurrency guard
+
+router.post('/chat', requireAuth, async (req, res) => {
+  if (activeSession) {
+    return res.status(409).json({
+      error: 'A chat session is already active. Wait for it to finish.',
+    });
+  }
+
+  const { message, username } = req.body;
+  const prompt = buildPrompt(message, username, await getBoardContext());
+
+  activeSession = { startedAt: Date.now() };
+  const child = spawn('claude', [prompt], {
+    timeout: 2 * 60 * 1000,                    // 2-minute hard cap
+    cwd: process.env.WORKING_DIRECTORY || process.cwd(),
+  });
+
+  let stdout = '', stderr = '';
+  child.stdout.on('data', (d) => { stdout += d.toString(); });
+  child.stderr.on('data', (d) => { stderr += d.toString(); });
+
+  child.on('close', (code) => {
+    activeSession = null;
+    if (code === 0) res.json({ response: stdout });
+    else res.status(500).json({ error: stderr || 'Claude CLI failed' });
+  });
+
+  child.on('error', (err) => {
+    activeSession = null;
+    res.status(500).json({ error: err.message });
+  });
+});
+
+function buildPrompt(message, username, context) {
+  return [
+    `You are an AI assistant inside Atrium. You help users plan, create, and manage tasks.`,
+    `## Current User: ${username}`,
+    `## Board Overview`,
+    context.summary,
+    ``,
+    `## User message:`,
+    message,
+  ].join('\n');
+}
+```
+
+## How it's used
+
+- **Atrium** — `POST /api/ai/chat` lets users talk to Claude with the task board as context; responses show up in the chat panel
+- **Pattern generalizes** to any self-hosted app where the user already has `claude`, `gemini`, or similar CLIs installed
+
+## Gotchas
+
+- **Concurrent sessions are trouble.** Two spawned Claude CLI processes in the same working directory can race on git operations, file writes, session state. Guard with a single in-memory flag or a filesystem lockfile. Reject requests that arrive during an active session rather than queueing.
+- **Timeouts are mandatory.** A runaway Claude session with an infinite loop tool call will block your single-concurrency chat forever. 2 minutes is a reasonable upper bound for chat responses.
+- **Prompt size has real limits.** Passing the entire task board as context quickly exceeds shell argument length limits. Summarize (counts, recent tasks, relevant IDs) rather than dumping everything.
+- **Streaming is harder than one-shot.** Claude CLI can stream to stdout, but forwarding that through Express to the UI requires server-sent events or a websocket. The simple pattern above collects full output and returns once. Good enough for short answers.
+- **The CLI's working directory matters.** `cwd` determines what files the AI can read via its tools. Set it to a scoped directory — not your backend's root — if you want to limit the blast radius.
+- **Stderr has useful context.** Don't just swallow it; forward it in the error path so failed chats are debuggable.
+- **Respect user intent on tools.** Claude might decide to `git push` as part of answering a question. Either configure the CLI's allowed tools for this use case (safer) or be aware your backend is handing the AI an arbitrary shell.
+- **API-key alternative.** If the person running your backend doesn't have `claude` installed, fall back gracefully: detect the binary on startup, hide the chat UI if missing, show an instructional message.
+
+## See also
+
+- [patterns/agent-task-board-protocol](../agent-task-board-protocol/) — the broader convention for human/agent collaboration that this chat feature plays into
+- [projects/atrium](../../projects/atrium/)

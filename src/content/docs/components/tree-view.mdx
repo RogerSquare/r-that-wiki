@@ -1,0 +1,78 @@
+---
+title: Tree view (parent-child hierarchy)
+description: Nested task display for work broken into subtasks via the `parent_task` field.
+---
+
+import TreeView from '../../../examples/tree-view.tsx';
+
+> **Source:** [atrium/frontend/src/components/TreeView.jsx](https://github.com/RogerSquare/atrium/blob/main/frontend/src/components/TreeView.jsx)
+> **Category:** View
+
+**Tree view** — a nested display of tasks that have a `parent_task` relationship. Shows the decomposition of a feature into subtasks without losing the ability to see status at each level.
+
+## What it is
+
+A recursive indented list. Each task row shows its id, title, and a status-colored accent strip on the left. Rows with children have a disclosure chevron; clicking expands or collapses the subtree. Task data is flat in the backend (one file per task); the tree is derived client-side from the `parent_task` field.
+
+## Why it exists
+
+Kanban views a flat board. Some work doesn't want to be flat — breaking down a feature into components and subtasks needs parent/child structure. The `parent_task` field in task YAML supports the relationship; this view makes it visible.
+
+## Live
+
+<div style={{ padding: 20, background: '#020617', borderRadius: 8 }}>
+  <TreeView client:load tasks={[
+    { id: 'feat-auth-000', title: 'User authentication system', status: 'in_progress' },
+    { id: 'feat-auth-001', title: 'JWT login endpoint', parent: 'feat-auth-000', status: 'review' },
+    { id: 'feat-auth-002', title: 'Password hashing with bcrypt', parent: 'feat-auth-000', status: 'done' },
+    { id: 'feat-auth-003', title: 'Refresh token rotation', parent: 'feat-auth-000', status: 'in_progress' },
+    { id: 'feat-auth-003a', title: 'Schema migration for refresh tokens', parent: 'feat-auth-003', status: 'done' },
+    { id: 'feat-auth-003b', title: 'Rotation endpoint + reuse detection', parent: 'feat-auth-003', status: 'in_progress' },
+    { id: 'feat-auth-004', title: 'Frontend login form', parent: 'feat-auth-000', status: 'todo' },
+    { id: 'ui-theme-001', title: 'Dark/light mode toggle', status: 'todo' },
+  ]} />
+</div>
+
+## Code sketch
+
+```jsx
+function buildTree(tasks) {
+  const byParent = {};
+  for (const t of tasks) (byParent[t.parent_task ?? '_root'] ??= []).push(t);
+  return byParent;
+}
+
+export default function TreeView({ tasks }) {
+  const byParent = buildTree(tasks);
+  const [expanded, setExpanded] = useState({});
+
+  function render(parent, depth) {
+    return (byParent[parent] ?? []).flatMap(t => [
+      <Row key={t.id} task={t} depth={depth} expanded={expanded} onToggle={toggle} />,
+      ...(isOpen(t.id) ? render(t.id, depth + 1) : []),
+    ]);
+  }
+
+  return <div>{render('_root', 0)}</div>;
+}
+```
+
+## How it's used
+
+- **Atrium** — third view option alongside Board and List. Useful for features with multiple sub-components or for daily standup framing ("where is each strand of this feature").
+- **Pattern generalizes** to any `id` + `parent_id` hierarchy — epics/stories, folders, org charts
+
+## Gotchas
+
+- **Cycles break the renderer.** If `A.parent = B` and `B.parent = A`, the recursion doesn't terminate. Detect or reject cycles at the backend — it should not be possible to save a task whose ancestors include itself.
+- **Orphans need a home.** If a task's `parent_task` points to a deleted task, the orphan disappears from the tree because its parent is missing from the grouping. Either reparent to `_root` on parent-delete, or show orphans in a special group at the top.
+- **Deep trees are hard to scan.** Limit depth or collapse deeply-nested branches by default. Atrium collapses to depth 2 on first render; user can expand further.
+- **Keys must be stable.** React reconciliation gets confused if you use index-in-list as the key (expanding one subtree shifts indices for siblings). Always key by task id.
+- **Drag-to-reparent is hard.** The DnD library has to know "this drop target is a tree row", emit the new parent id, and the backend has to validate no cycles. Atrium currently has reparent via a modal, not drag.
+- **Performance on large trees.** O(n) per render is fine up to ~500 tasks; bigger than that and virtualization helps, though virtualized trees are harder to implement than virtualized lists.
+- **Status rollup is a choice.** Some UIs show a parent's status as "derived from children" ("in progress" if any child is in progress). Atrium uses the parent's own status — less magic, more predictable.
+
+## See also
+
+- [components/list-view](../list-view/) · [components/board](../board/) — the flat views
+- [patterns/markdown-as-database](../../patterns/markdown-as-database/) — how `parent_task` is stored

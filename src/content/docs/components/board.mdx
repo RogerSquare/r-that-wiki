@@ -1,0 +1,81 @@
+---
+title: Board (kanban columns)
+description: Four-column kanban layout that groups tasks by status. The structural parent for task-card.
+---
+
+import Board from '../../../examples/board.tsx';
+
+> **Source:** [atrium/frontend/src/components/Board.jsx](https://github.com/RogerSquare/atrium/blob/main/frontend/src/components/Board.jsx)
+> **Category:** Composite component
+
+**Board** — Atrium's primary view: four columns (`todo`, `in_progress`, `review`, `done`), each rendering a vertical stack of task cards. Drag-drop reorders cards within a column and moves them across columns; each move fires a `PUT` to update `status`.
+
+## What it is
+
+A grid layout with one column per status. Cards inside columns are rendered by [TaskCard](../task-card/). The real Atrium Board wraps each card in a `Draggable` from `@hello-pangea/dnd`; the simplified version in the wiki strips the drag wiring and just shows the grouping.
+
+## Why it exists
+
+Kanban columns are the single most-used view. Having them as one component means column order, column labels, and empty-state behavior are consistent everywhere (main board, project-filtered view, swimlane groupings).
+
+Keeping the drag logic separate from the visual layout means the same Board component works in read-only contexts (notifications, screenshots, embedded previews).
+
+## Live
+
+<Board client:load tasks={[
+  { id: 'feat-auth-001', title: 'Implement JWT Login', status: 'in_progress', priority: 'high', type: 'frontend', assignee: 'Agent-FE', tags: ['react', 'jwt'] },
+  { id: 'bug-port-009', title: 'Admin link rejects scheme-less URLs', status: 'review', priority: 'high', type: 'backend', tags: ['url'] },
+  { id: 'feat-port-043', title: 'Make an Open Source Contribution', status: 'todo', priority: 'medium', tags: ['open-source'] },
+  { id: 'ui-filters-003', title: 'Add saved filter presets', status: 'todo', priority: 'low', type: 'frontend' },
+  { id: 'opt-perf-004', title: 'Memoize TaskCard', status: 'done', priority: 'medium', assignee: 'opus-agent', type: 'frontend' },
+  { id: 'feat-port-046', title: 'Light mode toggle', status: 'review', priority: 'medium', assignee: 'opus-agent', type: 'frontend', tags: ['theme'] },
+]} />
+
+## Code
+
+```jsx
+const columns = ['todo', 'in_progress', 'review', 'done'];
+
+export default function Board({ tasks }) {
+  const byStatus = groupBy(tasks, 'status');
+  return (
+    <div className="board-grid">
+      {columns.map(col => (
+        <div key={col} className="column">
+          <header>{labels[col]} <span>{byStatus[col]?.length ?? 0}</span></header>
+          <div className="stack">
+            {byStatus[col]?.map(t => <TaskCard key={t.id} task={t} />)}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+```
+
+The real Atrium Board adds:
+- A `DragDropContext` wrapping the grid
+- `Droppable` around each column's stack
+- `Draggable` around each card, firing a `PUT /api/tasks/:id` with the new status on `onDragEnd`
+- Swimlane grouping (by project, by assignee, by type) as a secondary axis
+- Empty-column placeholders
+
+## How it's used
+
+- **Atrium** — main view, list view fallback, project-filtered renders
+- **Pattern generalizes** to any status-grouped list UI where the user reorganizes by dragging
+
+## Gotchas
+
+- **Column list is canonical.** Atrium's four statuses aren't configurable — adding one means updating the type, the backend, this component, and the CSS. If you want configurable columns per-project, model it as data; otherwise the hardcoded list keeps things honest.
+- **Drag-drop libraries choose the DOM shape.** `@hello-pangea/dnd` requires its own wrapper elements; you can't put the drag handle on arbitrary children. Trying to customize the handle without reading the library's docs ends in pain.
+- **Move-between-columns is the interesting case.** Drag *within* a column = reorder (usually tracked in a `position` field). Drag *across* columns = status change. Handle both in one `onDragEnd`.
+- **Empty columns still need a dropzone.** Without an empty-state target, users can't drag anything into an empty column — feels broken. Always render the column wrapper even when it has zero cards.
+- **Virtualization breaks drag.** For boards with thousands of cards, you want virtual scrolling; most DnD libraries don't play nicely with it. Easier to paginate or hide low-priority done tasks than to force virtualization into the drag context.
+- **The simplified wiki render isn't interactive.** The live example above is layout-only — no dragging works. Useful for teaching the visual structure; not a drop-in replacement for the real thing.
+
+## See also
+
+- [components/task-card](../task-card/) — the card rendered inside each column
+- [projects/atrium](../../projects/atrium/)
+- [patterns/socket-io-live-state-fanout](../../patterns/socket-io-live-state-fanout/) — what keeps the board in sync across browser tabs

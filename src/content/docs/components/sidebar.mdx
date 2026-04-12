@@ -1,0 +1,79 @@
+---
+title: Sidebar (project switcher)
+description: Vertical nav listing projects with ID badges and task counts. The left edge of Atrium.
+---
+
+import Sidebar from '../../../examples/sidebar.tsx';
+
+> **Source:** [atrium/frontend/src/components/Sidebar.jsx](https://github.com/RogerSquare/atrium/blob/main/frontend/src/components/Sidebar.jsx)
+> **Category:** Navigation
+
+**Sidebar** — left-edge navigation listing every project (Unassigned + user-created). Each row shows the display name, the short ID badge, and a count of tasks in that project. Clicking filters the board.
+
+## What it is
+
+A list of clickable project rows with optional collapse behavior. The active project is highlighted; counts come from the live task data, so they update via socket fan-out (see [socket-io-live-state-fanout](../../patterns/socket-io-live-state-fanout/)).
+
+## Why it exists
+
+Atrium grew from one flat task pile to ~10 projects. Browsing them needed first-class nav. The requirements that drove this specific shape:
+
+- **ID badge visible** — people reference tasks by id (`atb`, `portfolio`), not display name. The badge lets them connect "I see `atb` in an API URL" to "the Atrium project".
+- **Task count** — empty projects should look empty; busy ones should look busy at a glance.
+- **Unassigned comes first** — the catch-all is usually where new ideas land; demoting it would hide fresh work.
+
+## Live
+
+<div style={{ display: 'flex', justifyContent: 'center', padding: 20, background: '#020617', borderRadius: 8 }}>
+  <Sidebar client:load />
+</div>
+
+## Code
+
+```jsx
+export default function Sidebar({ projects, activeProject, onSelect }) {
+  return (
+    <nav className="sidebar">
+      <div className="label">Projects</div>
+      {projects.map(p => (
+        <button
+          key={p.id}
+          onClick={() => onSelect(p.folder)}
+          className={activeProject === p.folder ? 'row active' : 'row'}
+        >
+          <span className="name">{p.id === 'root' ? 'Unassigned' : p.name}</span>
+          {p.id !== 'root' && <span className="id-badge">{p.id}</span>}
+          <span className="count">{p.count}</span>
+        </button>
+      ))}
+    </nav>
+  );
+}
+```
+
+The real sidebar adds:
+- A collapse toggle that shrinks to just icons/badges on narrow viewports
+- A search box filtering the project list by name fuzzy-match
+- Drag-and-drop to reorder projects (persisted to localStorage)
+- Right-click context menu for "rename id", "delete project", "open task folder in terminal"
+- Service-registry panel below the projects list
+
+## How it's used
+
+- **Atrium** — always visible on desktop, collapses to a hamburger trigger on mobile
+- **Pattern generalizes** to any multi-bucket app where buckets are user-defined and the list grows over time
+
+## Gotchas
+
+- **Active state has to match the backend's project name, not the display name.** If the id is `portfolio` but the folder was renamed from `Portfolio` to `Cairn`, the active comparison uses the folder. Mixing up `id` / `name` / `folder` is a recipe for "why doesn't the sidebar highlight".
+- **Counts are eventual.** They come from the latest fetch/socket event. If you delete 10 tasks via the API at once, the count badge lags until the next refetch. Fine for a dashboard; wrong for an "apply changes" confirmation.
+- **Root (Unassigned) protection.** Rename-id, delete, and reorder all need to no-op on the Root project. Easiest to filter it out of those affordances than to special-case every handler.
+- **Collapsed state accessibility.** Icon-only rows without tooltips are unusable for screen readers and for anyone who forgot the ID mapping. `title` attributes or `aria-label` always.
+- **ID badge font matters.** Monospace reads like code; proportional reads like text. Use monospace to signal "this is an identifier".
+- **Long project names.** Ellipsis truncation is mandatory; otherwise one 30-character project name blows out the whole sidebar width.
+
+## See also
+
+- [patterns/stable-project-ids](../../patterns/stable-project-ids/) — where the IDs come from
+- [components/board](../board/) — what gets filtered when a project is selected
+- [components/task-card](../task-card/)

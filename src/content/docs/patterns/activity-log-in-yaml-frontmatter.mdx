@@ -1,0 +1,83 @@
+---
+title: Activity log as YAML frontmatter
+description: Append-only event history lives inside the task's YAML frontmatter, not in a sidecar file or DB table.
+---
+
+> **Source:** [atrium task files](https://github.com/RogerSquare/atrium/tree/main/backend/tasks) — every task carries its own `activity_log` array
+> **Category:** Pattern — event history
+
+**Activity log in YAML** — each record's history lives on the record itself, as an append-only YAML array in the frontmatter. No join table, no separate log file, no external event store. Grep the file, read the life story.
+
+## What it is
+
+Every task `.md` file has an `activity_log:` field whose value is a list of event objects (`timestamp`, `action`, optional details). The backend appends to that array on every state-changing operation. The list is write-only from the app side — UI reads, backend appends, nothing deletes.
+
+## Why it exists
+
+**The problem:** "Who changed this, when, and to what?" needs answers. Classic options:
+
+1. **Separate events table/file** — introduces joins and "which table is authoritative" confusion
+2. **Git history** — works, but requires the record to be in git (often they're not) and git blame is noisy
+3. **No log at all** — becomes a problem the first time something surprises you
+
+**The fix:** colocate the log with the record. Reading the task's markdown file shows both its current state *and* how it got there, without any extra fetch.
+
+## Shape
+
+A task file's frontmatter:
+
+```yaml
+---
+id: feat-port-009
+title: Admin project link field rejects scheme-less URLs
+status: review
+priority: high
+created_at: '2026-04-12T08:25:00.000Z'
+started_at: '2026-04-12T08:27:00.000Z'
+reviewed_at: '2026-04-12T08:30:00.000Z'
+activity_log:
+  - timestamp: '2026-04-12T08:25:00.000Z'
+    action: Task created by RogerSquare
+  - timestamp: '2026-04-12T08:27:00.000Z'
+    action: Status changed to IN PROGRESS by opus-agent
+  - timestamp: '2026-04-12T08:30:00.000Z'
+    action: Status changed to REVIEW by opus-agent
+---
+```
+
+The append site in the backend:
+
+```js
+function appendActivity(task, action, author) {
+  const entry = {
+    timestamp: new Date().toISOString(),
+    action: typeof action === 'string' ? `${action} by ${author}` : action,
+  };
+  task.activity_log = [...(task.activity_log ?? []), entry];
+  return task;
+}
+
+// on every mutation:
+task = appendActivity(task, `Status changed to ${newStatus.toUpperCase()}`, user);
+await saveTaskFile(task);
+```
+
+## How it's used
+
+- **Atrium** — every status change, field edit, assignee change, move-between-projects appends an entry. The UI renders a timeline from this array.
+- **Pattern generalizes** to any markdown-as-database record where you want audit-style history inline
+
+## Gotchas
+
+- **Append-only, by discipline.** Nothing in the backend should edit or remove existing entries. If an event was wrong, append a correction — don't rewrite history.
+- **YAML lists are slow to parse past a few thousand entries.** A hot task with years of micro-edits will have a large log. Either cap on write (keep last N, summarize the rest) or split into a separate file when the list crosses a threshold.
+- **ISO 8601 timestamps, not Unix epoch.** The human-readable view wins for a file that humans will occasionally hand-edit. YAML handles the string fine; parsing with `new Date(entry.timestamp)` works everywhere.
+- **`action` as a free-text string is a feature, not a bug.** Structured events would be "better" in a database sense, but this log is consumed mostly by humans skimming. Free text reads better and costs nothing.
+- **Don't include large payloads in entries.** "Description updated" not "Description updated to: \<500 words\>". The entry is a pointer; the state is elsewhere.
+- **Concurrent writes can clobber the array.** Two requests both read the task, both append to their local copy, both save — the last writer wins and one entry is lost. Guard with a file lock or a single-owner write queue for any multi-writer scenario.
+- **The timestamp is trusted.** Whichever process writes picks the timestamp. If clocks disagree across agents writing to the same board, the log can appear out of order. Accept the occasional blip or centralize through one API.
+
+## See also
+
+- [patterns/markdown-as-database](../markdown-as-database/) — the data substrate this log lives in
+- [patterns/agent-task-board-protocol](../agent-task-board-protocol/) — the protocol that relies on a consistent log

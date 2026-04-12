@@ -1,0 +1,76 @@
+---
+title: List view
+description: Dense tabular alternative to the kanban. Sortable columns, optional grouping, better for "find a task across statuses".
+---
+
+import ListView from '../../../examples/list-view.tsx';
+
+> **Source:** [atrium/frontend/src/components/ListView.jsx](https://github.com/RogerSquare/atrium/blob/main/frontend/src/components/ListView.jsx)
+> **Category:** View
+
+**List view** — a flat table of every task, sortable by any column, optionally grouped (by status, priority, assignee, project). Used when the kanban is too wide or the user wants to scan many tasks at once.
+
+## What it is
+
+A CSS grid with a fixed header row and one row per task. Columns are id, title, status, type, assignee, priority, tags, created-at. Clicking a header sorts; click again to reverse. Grouping collapses the table into sections with count headers.
+
+## Why it exists
+
+The kanban is great for "what's in flight today", bad for "have we done anything about rate limiting in the last month". The list view is for scanning across status boundaries. Same data, different lens.
+
+## Live
+
+<div style={{ padding: 20, background: '#020617', borderRadius: 8 }}>
+  <ListView client:load tasks={[
+    { id: 'feat-auth-001', title: 'Implement JWT Login', status: 'in_progress', priority: 'high', type: 'frontend', assignee: 'Agent-FE' },
+    { id: 'bug-port-009', title: 'Admin link rejects scheme-less URLs', status: 'review', priority: 'high', type: 'backend', assignee: 'opus-agent' },
+    { id: 'feat-port-043', title: 'Make an Open Source Contribution', status: 'todo', priority: 'medium' },
+    { id: 'ui-filters-003', title: 'Add saved filter presets', status: 'todo', priority: 'low', type: 'frontend' },
+    { id: 'opt-perf-004', title: 'Memoize TaskCard', status: 'done', priority: 'medium', assignee: 'opus-agent', type: 'frontend' },
+    { id: 'feat-port-046', title: 'Light mode toggle', status: 'review', priority: 'medium', assignee: 'opus-agent', type: 'frontend' },
+    { id: 'bug-shortids-001', title: 'Project display name lost on restart', status: 'review', priority: 'medium', type: 'backend', assignee: 'opus-agent' },
+  ]} />
+</div>
+
+## Code sketch
+
+```jsx
+const columns = ['id', 'title', 'status', 'type', 'assignee', 'priority'];
+
+export default function ListView({ tasks }) {
+  const [sortKey, setSortKey] = useState('priority');
+  const [sortDir, setSortDir] = useState('asc');
+  const [groupBy, setGroupBy] = useState('none');
+
+  const sorted = useMemo(() => [...tasks].sort(compare(sortKey, sortDir)), [tasks, sortKey, sortDir]);
+  const grouped = groupBy === 'none' ? { All: sorted } : groupBy_(sorted, groupBy);
+
+  return (
+    <table>
+      <Header columns={columns} sortKey={sortKey} sortDir={sortDir} onSort={setSortKey} />
+      {Object.entries(grouped).map(([group, items]) => (
+        <GroupSection key={group} label={group} count={items.length} items={items} />
+      ))}
+    </table>
+  );
+}
+```
+
+## How it's used
+
+- **Atrium** — toggle between Board / List / Tree from the top-right view switcher. Preferences persist in localStorage.
+- **Pattern generalizes** to any collection that benefits from both a card view and a table view
+
+## Gotchas
+
+- **Virtualization kicks in around ~200 rows.** Below that, plain render is fine; above, scroll performance tanks in non-virtualized tables. Atrium uses `@tanstack/react-virtual` when task count crosses a threshold.
+- **Sort stability.** JS `Array.sort` isn't stable in some older runtimes; modern engines are. If you see tasks shuffling on repeated sorts, convert to a comparator that breaks ties by id.
+- **Column widths are a design decision.** Fixed-width columns for id, status, type, assignee; flex column for title. Otherwise a long title pushes everything else off-screen.
+- **Grouping adds a second axis.** When combined with sorting, the user's mental model is "sort within groups". Make that explicit; don't let grouping override sorting silently.
+- **Row density vs scannability.** Dense rows fit more tasks per screen; sparse rows are more readable. Atrium ships one density and lets users tweak via a settings toggle.
+- **Sticky header matters.** Scrolling long lists without a sticky header is unusable. `position: sticky` on the header row, not `fixed` — sticky respects the table's scroll container.
+
+## See also
+
+- [components/task-card](../task-card/) · [components/board](../board/) — the other two primary views
+- [projects/atrium](../../projects/atrium/)
