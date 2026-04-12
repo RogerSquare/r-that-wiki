@@ -1,0 +1,94 @@
+---
+title: Frame-timed animation in Ink
+description: setInterval vs setTimeout vs requestAnimationFrame in a terminal. They're all wrong; one is least wrong.
+---
+
+> **Source:** [kaleidoscope](https://github.com/RogerSquare/kaleidoscope) — animations across demos
+> **Category:** Pattern — terminal animation
+
+**Frame-timed animation in Ink** — terminals don't have `requestAnimationFrame`; the "screen" refresh is your interval's tick. Your choice is between `setInterval` (simple, drifts), chained `setTimeout` (more control, variable cost), or manual delta-time tracking (correct, overkill for most cases). Pick `setInterval` unless you have a reason not to.
+
+## The landscape
+
+Browser has `requestAnimationFrame` — the browser calls you when it's ready to paint, typically at 60 FPS. Ink has none of that. Ink re-renders when React re-renders, which happens when state changes. So "animating" in Ink means "change state periodically".
+
+Your timer options:
+
+| Technique | Cost | Drift | When |
+|---|---|---|---|
+| `setInterval(fn, 80)` | tiny | yes (event loop) | simple cases, short-running |
+| Chained `setTimeout(fn, 80)` | tiny | less | when you want to vary the delay per tick |
+| Delta-time loop | small | no | precision matters; rare in terminals |
+
+All three are polling. Terminals don't give you a "frame is ready" signal; you pick a rate and hope it looks smooth.
+
+## Simple — setInterval
+
+```tsx
+useEffect(() => {
+  const id = setInterval(() => {
+    setFrame(f => (f + 1) % FRAMES.length);
+  }, 80);
+  return () => clearInterval(id);
+}, []);
+```
+
+Drifts over long runs (the event loop cares more about other work), but for a spinner nobody measures this. Default to this.
+
+## Controllable — chained setTimeout
+
+```tsx
+useEffect(() => {
+  let id: NodeJS.Timeout;
+  let stopped = false;
+  const tick = () => {
+    if (stopped) return;
+    const delay = FRAME_DELAYS[frame % FRAME_DELAYS.length];   // variable
+    setFrame(f => (f + 1) % FRAMES.length);
+    id = setTimeout(tick, delay);
+  };
+  tick();
+  return () => { stopped = true; clearTimeout(id); };
+}, []);
+```
+
+Use when delays vary per frame (typing animations, variable-pause spinners).
+
+## Precise — delta-time loop
+
+```tsx
+useEffect(() => {
+  let last = Date.now();
+  const id = setInterval(() => {
+    const now = Date.now();
+    const dt = (now - last) / 1000;   // seconds since last tick
+    last = now;
+    setAngle(a => (a + dt * 360 * SPEED) % 360);
+  }, 16);
+  return () => clearInterval(id);
+}, []);
+```
+
+Whatever your target (rotate 360°/s), delta-time honors it regardless of how much the interval drifts. Overkill for spinners; necessary for physics-y animations.
+
+## Why not requestAnimationFrame
+
+Node doesn't have `requestAnimationFrame`; the browser does. Ink runs in Node. You can shim it (`setTimeout(..., 16)`), but you've recreated `setInterval` with extra steps.
+
+## How it's used
+
+- **Kaleidoscope** — every animation demo (spinners, progress, shimmer, gradient text) uses one of these
+- **Pattern generalizes** to any animation in a non-RAF context
+
+## Gotchas
+
+- **React re-render cost.** Setting state every 80ms is ~12 re-renders per second per component. For one spinner, negligible. For 50 simultaneous spinners, you're committing to layout work 600 times/second.
+- **Cleanup.** `return () => clearInterval(id)` in every effect. Missed cleanup leaks timers and occasionally runs against an unmounted component.
+- **Stopped when unfocused.** Ink doesn't pause when the terminal window loses focus — your animation keeps running. Browser tab visibility throttles RAF; Node doesn't. If CPU cost matters, manually pause via a visibility signal (harder in Ink).
+- **Rate selection.** 60 FPS (16ms) is overkill for text rendering; the terminal can't keep up. 10-15 FPS (67-100ms) looks smooth enough and costs 1/4 to 1/6 the CPU.
+- **Flicker on fast rates.** Some terminals batch updates differently. If your animation flashes, slow the rate or use buffered output (Ink handles buffering).
+- **`setImmediate` vs `setTimeout(fn, 0)`.** Either works for "do this next tick"; prefer `setImmediate` in Node (slightly more defined semantics).
+
+## See also
+
+- [components/claude-spinner](../../components/claude-spinner/) · [components/thinking-indicator](../../components/thinking-indicator/) · [components/progress-bar-subpixel](../../components/progress-bar-subpixel/) — all use this pattern

@@ -1,0 +1,58 @@
+---
+title: Selection menu (arrow + number shortcuts)
+description: Vertical list with arrow-key navigation. Number keys jump directly. Vim bindings (j/k) for power users.
+---
+
+import SelectionMenu from '../../../examples/selection-menu.tsx';
+
+> **Source:** [kaleidoscope/src/demos/selection-menu.tsx](https://github.com/RogerSquare/kaleidoscope)
+> **Category:** Interactive
+
+**Selection menu** — the canonical "pick one from a list" TUI component. Vertical items; arrow keys (or `j`/`k`) move the cursor; number keys (1-9) jump directly; Enter commits. Ink's bread and butter.
+
+## Live
+
+Hover the menu (or focus it) and use arrow keys or j/k/1-5.
+
+<SelectionMenu client:load />
+
+## Ink version
+
+```tsx
+import { Box, Text, useInput } from 'ink';
+
+function Menu({ items, onSelect }) {
+  const [active, setActive] = useState(0);
+  useInput((input, key) => {
+    if (key.upArrow   || input === 'k') setActive(a => Math.max(0, a - 1));
+    if (key.downArrow || input === 'j') setActive(a => Math.min(items.length - 1, a + 1));
+    if (key.return) onSelect(items[active]);
+    const n = parseInt(input, 10);
+    if (n >= 1 && n <= items.length) setActive(n - 1);
+  });
+  return (
+    <Box flexDirection="column">
+      {items.map((it, i) => (
+        <Text key={it.id} color={i === active ? 'cyan' : 'gray'}>
+          {i === active ? '▸ ' : '  '}{i + 1}. {it.label}
+        </Text>
+      ))}
+    </Box>
+  );
+}
+```
+
+## Gotchas
+
+- **Keyboard scope.** In the browser version, arrow keys also scroll the page. Constrain the key handler to only fire when the menu has focus or hover. Ink has no browser-scroll problem.
+- **Wrap or clamp?** Arrow-down at the last item: wrap to first (circular) or clamp at last? Circular is more common in TUIs; clamp is more common in GUIs. Either is fine; pick one.
+- **Number key ambiguity.** With 10+ items, `1` is ambiguous — did the user want item 1, or was it the start of `15`? Most terminals don't wait long enough to disambiguate. Cap at 9 or use a multi-key commit mode (`enter` after the digits).
+- **Disabled items.** Render them grayed out and skip them in arrow-key navigation. Don't just ignore the keypress — visibly skip the disabled row.
+- **Long labels.** Truncate with ellipsis or wrap; the menu should accommodate a long `hint` column that shrinks or hides on narrow widths.
+- **Accessibility (browser version).** `role="menu"`, `role="menuitem"`, `aria-activedescendant` to announce the active item to screen readers.
+- **Search within the menu.** For very long menus, typing a letter should jump to the first item starting with that letter. Add it as a refinement.
+
+## See also
+
+- [components/text-input-form](../text-input-form/) — sibling interactive primitive
+- [components/tab-panel-navigation](../tab-panel-navigation/) — similar keyboard-first pattern for horizontal nav

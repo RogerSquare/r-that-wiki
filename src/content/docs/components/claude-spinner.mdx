@@ -1,0 +1,45 @@
+---
+title: Claude spinner
+description: Unicode braille-frame rotation with a periodically-changing verb. The visual signal for "agent is thinking".
+---
+
+import ClaudeSpinner from '../../../examples/claude-spinner.tsx';
+
+> **Source:** [kaleidoscope/src/demos/claude-spinner.tsx](https://github.com/RogerSquare/kaleidoscope)
+> **Category:** Animation
+
+**Claude spinner** — two timers: one rotates a 10-frame braille sequence at ~12Hz; the other cycles a list of verbs ("Thinking", "Analyzing", "Drafting") every ~2 seconds. Together they suggest *active ongoing thought* without a specific progress value.
+
+## Live
+
+<ClaudeSpinner client:load />
+
+## Code
+
+```jsx
+const FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+const VERBS  = ['Thinking', 'Analyzing', 'Considering', 'Drafting', 'Crafting'];
+
+function ClaudeSpinner() {
+  const [frame, setFrame] = useState(0);
+  const [verb, setVerb]   = useState(0);
+  useEffect(() => {
+    const f = setInterval(() => setFrame(f => (f + 1) % FRAMES.length), 80);
+    const v = setInterval(() => setVerb(v => (v + 1) % VERBS.length), 1800);
+    return () => { clearInterval(f); clearInterval(v); };
+  }, []);
+  return <span>{FRAMES[frame]} {VERBS[verb]}...</span>;
+}
+```
+
+## Gotchas
+
+- **Two timers, not one.** Frame cadence (~80ms) and verb cadence (~1800ms) are independent. Combining them into one timer couples them awkwardly.
+- **Braille characters are single-column.** Don't try emoji spinners in the terminal; widths vary by font.
+- **Verb cycling must be longer than reading time.** Under 1s is disorienting; over 3s feels static. 1.5-2s is the sweet spot.
+- **Accessibility.** Screen readers should announce "Thinking..." once, not every frame. Use `aria-live="polite"` on an off-screen span with the verb text only.
+
+## See also
+
+- [components/thinking-indicator](../thinking-indicator/) — alternative visual motifs
+- [projects/kaleidoscope](../../projects/kaleidoscope/)

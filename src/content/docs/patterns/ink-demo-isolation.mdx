@@ -1,0 +1,64 @@
+---
+title: Ink demo isolation
+description: Every reference demo is a pure, standalone component in its own file. Zero cross-imports. Copy-paste adoption is the point.
+---
+
+> **Source:** [kaleidoscope/src/demos](https://github.com/RogerSquare/kaleidoscope)
+> **Category:** Pattern — reference libraries
+
+**Ink demo isolation** — if you're building a reference library of UI techniques, put each technique in its own file with zero cross-imports. The reader should be able to copy one file into their project and get the demonstrated effect, without a dependency graph to untangle.
+
+## What it is
+
+Kaleidoscope's structure: `src/demos/<name>.tsx`. Each file exports one component. Each file imports only from `react`, `ink`, and the npm registry — *never* from sibling demos or a shared `src/common/`. If two demos happen to need the same helper, the helper is duplicated.
+
+## Why it exists
+
+**The problem:** Reference libraries tend to evolve into mini-frameworks. Common hooks extracted into `hooks/`; styles into `theme/`; utilities into `utils/`. The first demo you copy pulls in three files and a type dependency.
+
+For a learning library, that's wrong. The reader wants the *idea*, not a framework buy-in.
+
+**The fix:** isolate. Each demo is self-contained. Duplication is fine — it serves clarity. If you later decide three demos need the same helper, write a fourth "here's how to extract common code" demo, don't retroactively refactor the first three.
+
+## Shape
+
+```
+src/
+├── app.tsx                 # demo picker menu; imports demos lazily
+├── demos/
+│   ├── claude-spinner.tsx        # exports one component; imports only react + ink
+│   ├── progress-bar.tsx          # ditto
+│   ├── streaming-text.tsx        # ditto
+│   ├── gradient-text.tsx
+│   └── ...
+└── index.ts                # entry point
+```
+
+Demos never `import { something } from '../demos/other-demo'`. Never.
+
+## Rules
+
+1. **One component per file.** Named default export matching the filename.
+2. **Imports from react, ink, and npm-published utilities only.** No relative imports to sibling demos or shared utilities.
+3. **Duplicate freely.** If two demos need the same braille-spinner frames, both declare their own `FRAMES` constant.
+4. **Self-contained styling.** Each demo's visual choices are local. Hardcode colors if you want; you're teaching the idea, not a theme system.
+5. **File fits on one screen.** Aim for under 80 lines. Longer demos split into "here's the whole thing" and "here's the focused part".
+
+## How it's used
+
+- **Kaleidoscope** — 30+ demos, each standalone
+- **Pattern generalizes** to any reference / learning repository: algorithm tutorials, design-pattern catalogs, framework playgrounds
+
+## Gotchas
+
+- **"But I'd DRY this."** Yes, normally. In a library-of-examples, duplication is the product. A refactor improves local code quality and degrades reader experience.
+- **The demo picker is a special case.** `app.tsx` that lists the demos has to import them. That's fine — the picker is infrastructure, not a demo.
+- **Discipline erodes.** After demo #20, the temptation to extract a `useCyclingValue` hook gets strong. Resist. Or: extract to an npm package if it's genuinely useful, then import from npm rather than a sibling path.
+- **Tests can share setup.** Tests aren't demos. `test/helpers.ts` is fine; `demos/helpers.ts` is not.
+- **Styling inconsistency.** Different demos will use slightly different colors, spacing, frame timings. That's a feature — shows the range of reasonable choices.
+- **Reader confusion.** A reader might expect "all demos look the same, this one is weird". Add a README that explains: "each demo is isolated, so visual choices vary per demo".
+
+## See also
+
+- [projects/kaleidoscope](../../projects/kaleidoscope/) — the library this pattern shapes
+- [patterns/frame-timed-animation-in-ink](../frame-timed-animation-in-ink/) — an animation technique several demos share (by duplication)

@@ -1,0 +1,64 @@
+---
+title: Split pane layout
+description: Two panes separated by a draggable divider. The shape lazygit, vim, and every TUI commit-browser uses.
+---
+
+import SplitPaneLayout from '../../../examples/split-pane-layout.tsx';
+
+> **Source:** [kaleidoscope/src/demos/split-pane.tsx](https://github.com/RogerSquare/kaleidoscope)
+> **Category:** Layout
+
+**Split pane layout** — left: navigation or list. Right: detail. Separated by a 1-cell vertical line or a draggable divider. Probably the most-copied TUI layout pattern: lazygit, vim's netrw, tig, ranger all use it.
+
+## Live
+
+Drag the divider.
+
+<SplitPaneLayout client:load />
+
+## Why it's dominant
+
+- **Lists want narrow width.** Titles, short labels, line counts.
+- **Detail wants wider width.** Full text, code, wrapping paragraphs.
+- **Related content stays visible.** User selects left, sees right — no mode switch, no back button.
+
+The ratio (35% left / 65% right) is a defensible default. Heavier content-left cases might use 50/50; heavy-detail cases lean to 25/75.
+
+## Ink implementation
+
+```tsx
+import { Box } from 'ink';
+
+<Box flexDirection="row">
+  <Box width="35%" borderStyle="single" flexDirection="column">
+    {/* List */}
+  </Box>
+  <Box width="65%" flexDirection="column">
+    {/* Detail */}
+  </Box>
+</Box>
+```
+
+Ink doesn't support draggable dividers — keyboard shortcuts cycle through fixed ratios instead:
+
+```tsx
+useInput((input, key) => {
+  if (key.ctrl && input === '=') setRatio(r => Math.min(0.75, r + 0.05));
+  if (key.ctrl && input === '-') setRatio(r => Math.max(0.15, r - 0.05));
+});
+```
+
+## Gotchas
+
+- **Minimum width.** Each pane needs enough room to be usable. Don't let the divider drag to 0. Clamp at ~15% on each side.
+- **Responsive collapse.** On very narrow viewports (or narrow terminals), collapse to a single pane with a tab switcher. Don't try to render split layouts below 80 columns.
+- **Focus management.** Tab moves between panes. The active pane shows its focus state (different border color, bright cursor).
+- **Keyboard shortcut parity with mouse.** Everything the mouse can do, the keyboard should too. Vim users will tell you if you forget.
+- **Pane content overflow.** Both panes should scroll independently. If the left pane (list) is long, scrolling it shouldn't affect the right pane (detail).
+- **Divider grab area.** 1px is too narrow for mouse use; 4-8px is comfortable. In Ink, use a dedicated column that visibly indicates the divider.
+- **Persist the ratio.** Save the user's chosen ratio to localStorage (browser) or a config file (Ink). They resized it for a reason.
+
+## See also
+
+- [components/sidebar](../sidebar/) — analogous "narrow list on the left" pattern in a web UI
+- [components/photo-viewer](../photo-viewer/) — split is used for image + metadata-sidebar in Artifex

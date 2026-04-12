@@ -1,0 +1,54 @@
+---
+title: Thinking indicators (3 variants)
+description: Shimmer, braille, and pulse — three low-bandwidth ways to say "something is happening, please wait".
+---
+
+import ThinkingIndicator from '../../../examples/thinking-indicator.tsx';
+
+> **Source:** [kaleidoscope/src/demos/thinking-indicator.tsx](https://github.com/RogerSquare/kaleidoscope)
+> **Category:** Animation
+
+**Thinking indicators** — three visual motifs for "working, unknown duration". **Shimmer** runs a highlight wave across a word. **Braille** is the classic rotating-dot spinner. **Pulse** is a dot that fades in and out.
+
+## Live
+
+<ThinkingIndicator client:load />
+
+## When to use which
+
+| Indicator | Bandwidth | Best for |
+|---|---|---|
+| **Shimmer** | Medium | Skeleton loaders, placeholders for expected content |
+| **Braille** | Tight | Tight spaces, single-character indicators next to prompts |
+| **Pulse** | Low | Status dots, connection indicators, "I'm still here" signals |
+
+## Core techniques
+
+All three share the same shape: a RAF loop that advances a time variable, and a render that maps time → visual property (hue, opacity, character).
+
+```jsx
+// Time-driven animation, pauseable on unmount
+useEffect(() => {
+  let raf = 0, last = performance.now();
+  const step = (now) => {
+    const dt = (now - last) / 1000; last = now;
+    setT(prev => (prev + dt * speed) % period);
+    raf = requestAnimationFrame(step);
+  };
+  raf = requestAnimationFrame(step);
+  return () => cancelAnimationFrame(raf);
+}, []);
+```
+
+## Gotchas
+
+- **Respect `prefers-reduced-motion`.** All three should go static when set. Shimmer stops moving; braille shows a fixed character; pulse stays at full opacity.
+- **Pulse in the terminal uses color, not opacity.** Terminals don't have alpha. Modulate color brightness instead (dim to bright and back).
+- **Shimmer width vs text length.** A shimmer wave narrower than the text reads as a "highlight moving through". Wider than the text, the whole thing just brightens and dims — not the effect you want.
+- **Don't stack these.** Putting a thinking indicator *next to* a progress bar is redundant. Use one or the other.
+
+## See also
+
+- [components/claude-spinner](../claude-spinner/) — the richer braille+verb variant
+- [components/loading-skeleton](../loading-skeleton/) — the structural cousin
+- [patterns/frame-timed-animation-in-ink](../../patterns/frame-timed-animation-in-ink/)

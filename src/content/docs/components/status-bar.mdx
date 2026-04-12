@@ -1,0 +1,69 @@
+---
+title: Status bar + header (TUI chrome)
+description: Top breadcrumb nav, bottom status line with mode indicator, clock, file encoding. The fixed frame around every vim-style TUI.
+---
+
+import StatusBarAndHeader from '../../../examples/status-bar.tsx';
+
+> **Source:** [kaleidoscope/src/demos/status-bar.tsx](https://github.com/RogerSquare/kaleidoscope) · [kaleidoscope/src/demos/header.tsx]
+> **Category:** Layout
+
+**Status bar + header** — the top and bottom lines of a vim-style TUI. Header shows where you are (breadcrumb, project, file). Status bar shows small persistent state: mode, encoding, cursor position, time. Neither scrolls with the content; both are always visible.
+
+## Live
+
+<StatusBarAndHeader client:load />
+
+## Shape
+
+```tsx
+<Box flexDirection="column" height="100%">
+  <Header>              {/* 1 row, breadcrumb, fixed top */}
+  <Box flex="1">
+    <Content />         {/* the actual scrollable area */}
+  </Box>
+  <StatusBar>           {/* 1 row, tokens, fixed bottom */}
+</Box>
+```
+
+In Ink, `flex="1"` on the middle Box makes it grow; header and status stay at their natural height.
+
+## Why it exists
+
+- **Persistent context.** User never has to remember "what mode am I in" or "where am I". The status bar answers from anywhere.
+- **Chrome vs content separation.** Scrolling the content doesn't scroll the nav. Standard text editor UX; users expect it.
+- **Dense information, small area.** Status bars pack 5-8 tokens into one row; each token is a few characters. More info per pixel than any other UI element.
+
+## Header content
+
+Common tokens, left to right:
+- **Breadcrumb** — project → file → section
+- **Modified indicator** — `●` or `*` when unsaved
+- **Branch / env / version** — when relevant
+- **Close / help buttons** (if mouse is supported)
+
+## Status bar content
+
+Common tokens, left to right:
+- **Mode** (`NORMAL`, `INSERT`, `VISUAL`) — vim style; optional
+- **Encoding** (`utf-8`)
+- **File type** (`ts`, `md`)
+- **Cursor position** (`120:42 / 480`)
+- **Clock**
+
+Right-align the less-dynamic tokens so the eye reads left-to-right by importance.
+
+## Gotchas
+
+- **Fixed height in character rows.** Status bar = exactly 1 row. Header = 1 or 2 rows. Multi-row chrome eats into content space disproportionately in narrow terminals.
+- **Color for mode, not position.** Vim's INSERT is green, NORMAL is blue, VISUAL is purple — *modality* is the signal, not where on the screen it appears.
+- **Truncation.** Long breadcrumbs need to truncate from the middle (`project > ... > file` not `proje > fil...`). Preserves the two most important pieces.
+- **Clock update interval.** Once a second is fine for seconds-precision; once a minute if you only show H:M. Don't update per RAF.
+- **Don't over-decorate.** Nerd Font icons in the status bar look great; they also break in terminals without those fonts. Test on a fresh Ubuntu with default fonts.
+- **Mouse support in Ink.** Ink has limited mouse support. Status bar clicks probably don't work. Keep status tokens informational, not interactive.
+- **Web version lifetimes.** Browser status bars often live above the viewport bottom (above the page itself). Fixed positioning; care with iOS viewport handling.
+
+## See also
+
+- [components/split-pane-layout](../split-pane-layout/) — what usually sits between header and status bar
+- [components/tab-panel-navigation](../tab-panel-navigation/) — complementary top-of-screen nav

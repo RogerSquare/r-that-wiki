@@ -1,0 +1,47 @@
+---
+title: Progress bar (sub-character precision)
+description: 9 Unicode block-element characters give a terminal-width progress bar ~8x finer resolution than the character grid.
+---
+
+import ProgressBarSubpixel from '../../../examples/progress-bar-subpixel.tsx';
+
+> **Source:** [kaleidoscope/src/demos/progress-bar.tsx](https://github.com/RogerSquare/kaleidoscope)
+> **Category:** Animation
+
+**Progress bar (sub-pixel)** — the terminal's character grid limits you to one-cell increments. By using the Unicode left-block characters `▏ ▎ ▍ ▌ ▋ ▊ ▉ █`, each cell can show 1/8 through 8/8 filled, giving you ~8x the effective resolution.
+
+## Live
+
+<ProgressBarSubpixel client:load />
+
+## How the math works
+
+For a bar of N cells at progress `p` (0..1):
+
+```js
+const BLOCKS = ['', '▏', '▎', '▍', '▌', '▋', '▊', '▉', '█'];
+
+function renderBar(p, width) {
+  const totalSubUnits = width * 8;
+  const filled = Math.round(p * totalSubUnits);
+  const fullCells = Math.floor(filled / 8);
+  const partial = BLOCKS[filled % 8];
+  const empty = width - fullCells - (partial ? 1 : 0);
+  return '█'.repeat(fullCells) + partial + ' '.repeat(Math.max(0, empty));
+}
+```
+
+Each character cell becomes 8 "sub-units" of progress. A 20-character bar now has 160 distinguishable positions instead of 20.
+
+## Gotchas
+
+- **Font width matters.** Most monospace fonts render all 9 block characters at the same width. Some non-monospace fonts don't, and your bar wobbles.
+- **Color the filled region, not the partial block.** A single color for the whole bar keeps the subpixel animation crisp. Two-tone (different color for partial) draws attention to the "boundary" pixel.
+- **Integer math for perf.** `Math.round(p * width * 8)` computes once per frame. Avoid float arithmetic inside the render loop for large bars.
+- **RTL scripts flip the bar.** Force `dir="ltr"` on the wrapper if you render this in an RTL locale.
+- **Terminal rendering quirks.** Some terminals (older Windows console) don't render the thin block characters correctly. Test on the platforms you care about.
+
+## See also
+
+- [patterns/sub-character-unicode-precision](../../patterns/sub-character-unicode-precision/) — the generalized pattern
+- [components/loading-skeleton](../loading-skeleton/) — related "show progress with texture" technique

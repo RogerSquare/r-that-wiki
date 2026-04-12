@@ -1,0 +1,92 @@
+---
+title: ink-testing-library basics
+description: Test Ink components without a real terminal. Render to a virtual frame buffer, assert on the text output.
+---
+
+> **Source:** [kaleidoscope test suite](https://github.com/RogerSquare/kaleidoscope)
+> **Category:** Snippet — testing
+
+**ink-testing-library** — Ink's sibling to `@testing-library/react`. Renders your component to a virtual terminal, lets you assert on the output as plain text, simulate keyboard input. Tests run headless, no PTY needed.
+
+## Install
+
+```bash
+npm install -D ink-testing-library vitest
+```
+
+## Minimal test
+
+```tsx
+import { render } from 'ink-testing-library';
+import { Text } from 'ink';
+import { test, expect } from 'vitest';
+
+function Hello({ name }: { name: string }) {
+  return <Text>Hello, {name}!</Text>;
+}
+
+test('renders name', () => {
+  const { lastFrame } = render(<Hello name="world" />);
+  expect(lastFrame()).toContain('Hello, world!');
+});
+```
+
+`lastFrame()` returns a string — the rendered terminal output with ANSI escapes stripped. Easy to assert against.
+
+## Simulating input
+
+```tsx
+import { render } from 'ink-testing-library';
+
+test('menu arrow down moves the cursor', () => {
+  const { stdin, lastFrame } = render(<Menu items={items} />);
+  expect(lastFrame()).toContain('▸ First');
+
+  stdin.write('\u001B[B');          // ArrowDown
+  expect(lastFrame()).toContain('▸ Second');
+
+  stdin.write('\r');                 // Enter
+  // ...
+});
+```
+
+Common key codes:
+- `\u001B[A` — ArrowUp
+- `\u001B[B` — ArrowDown
+- `\u001B[C` — ArrowRight
+- `\u001B[D` — ArrowLeft
+- `\r` — Enter / Return
+- `\u007F` — Backspace
+- `\t` — Tab
+
+## Testing animations
+
+Animations fire on timers. Use vitest's fake timers:
+
+```tsx
+import { vi } from 'vitest';
+
+test('spinner cycles frames', () => {
+  vi.useFakeTimers();
+  const { lastFrame } = render(<Spinner />);
+
+  expect(lastFrame()).toMatch(/⠋/);
+  vi.advanceTimersByTime(80);       // one frame tick
+  expect(lastFrame()).toMatch(/⠙/);
+  vi.useRealTimers();
+});
+```
+
+## Gotchas
+
+- **ANSI stripped by default.** `lastFrame()` gives plain text — color information is lost. Test text content, not styling. If you must test color, `frames` returns raw output.
+- **Async effects.** `useEffect` that calls `setState` runs asynchronously. Use `await` or `vi.useFakeTimers()` + `vi.runAllTimers()` to flush.
+- **Measurements are lies.** The virtual terminal is 80 columns by default. Components that use `useStdoutDimensions` get that, not the real terminal size. Mock if you need specific dimensions.
+- **Testing interactive menus end-to-end is fragile.** Prefer unit tests of the state (did the selection index move?) over assertions on rendered output (do the brackets appear in the right place?).
+- **Unmount cleanup.** `const { unmount } = render(...); unmount();` — otherwise timers and intervals keep running after the test ends and pollute subsequent tests.
+- **No subprocess.** This isn't a real PTY; spawning real Ink app and talking to its stdin/stdout would be an integration test. ink-testing-library is for unit tests.
+
+## See also
+
+- [patterns/ink-demo-isolation](../../patterns/ink-demo-isolation/) — what to test
+- [projects/kaleidoscope](../../projects/kaleidoscope/)

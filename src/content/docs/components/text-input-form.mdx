@@ -1,0 +1,72 @@
+---
+title: Text input form
+description: Multi-field form with validation, ghost text, tab navigation between fields. Primitives every TUI app wants.
+---
+
+import TextInputForm from '../../../examples/text-input-form.tsx';
+
+> **Source:** [kaleidoscope/src/demos/text-input-form.tsx](https://github.com/RogerSquare/kaleidoscope)
+> **Category:** Interactive
+
+**Text input form** — Ink's "form" primitive. Each field renders a row with a label, input, and optional inline error. Tab moves between fields; validation runs per keystroke; submit is disabled until everything is valid. The pattern every CLI wizard uses.
+
+## Live
+
+<TextInputForm client:load />
+
+## What's non-trivial
+
+- **Cursor handling** in the terminal. Ink's input components render a caret you have to manage yourself — no OS-provided text cursor. Browser inputs are free.
+- **Ghost text (placeholder)** in monospace looks *subtle* if you get the color right. `rgba(148,163,184,0.4)` in the browser; dim gray in Ink.
+- **Inline validation** — fires on every keystroke, shown only after the user has typed something (not while the field is empty and unfocused).
+- **Tab order** defined by the component, not the terminal. Shift-tab goes back. Enter submits the form when all fields are valid.
+
+## Ink version sketch
+
+```tsx
+import { Box, Text, useInput } from 'ink';
+import TextInput from 'ink-text-input';
+
+function Form({ fields, onSubmit }) {
+  const [values, setValues] = useState({});
+  const [active, setActive] = useState(0);
+
+  useInput((input, key) => {
+    if (key.tab && !key.shift) setActive(a => Math.min(fields.length - 1, a + 1));
+    if (key.tab &&  key.shift) setActive(a => Math.max(0, a - 1));
+    if (key.return && allValid(values, fields)) onSubmit(values);
+  });
+
+  return (
+    <Box flexDirection="column">
+      {fields.map((f, i) => (
+        <Box key={f.name}>
+          <Text color="gray">{f.label}: </Text>
+          <TextInput
+            value={values[f.name] ?? ''}
+            onChange={v => setValues(x => ({ ...x, [f.name]: v }))}
+            focus={i === active}
+            placeholder={f.placeholder}
+          />
+          {errors[f.name] && <Text color="red"> ← {errors[f.name]}</Text>}
+        </Box>
+      ))}
+    </Box>
+  );
+}
+```
+
+## Gotchas
+
+- **Ghost-text color in terminals.** Use a dim gray (`\x1b[90m` or `chalk.gray`). Too light disappears on light terminal themes; too dark looks like real input.
+- **Validation timing.** Validate on blur or after a small debounce, not per-keystroke on every field. Otherwise the user sees "required" the instant they start typing a required field.
+- **Initial focus.** First field gets focus on mount. Don't require a click — TUI apps should work without touching the mouse.
+- **Submit on Enter vs newlines.** For single-line inputs, Enter submits. For multi-line `<textarea>`-like fields, Enter adds a newline and Ctrl+Enter (or Cmd+Enter) submits.
+- **Paste handling.** Multi-line paste into a single-line input should replace or sanitize. Most terminals just dump the newline.
+- **Password fields.** Mask with `•` or `*` but offer a reveal shortcut (Ctrl+/). Don't log the real value anywhere.
+- **Unicode input** (CJK, emoji) may not render correctly in all terminals. Test on the platforms you care about.
+
+## See also
+
+- [components/selection-menu](../selection-menu/) — the other keyboard-first primitive
+- [projects/kaleidoscope](../../projects/kaleidoscope/)
