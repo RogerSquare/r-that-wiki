@@ -1,0 +1,92 @@
+---
+title: Destructive action confirmation UI
+description: An "Are you sure" dialog with a typed confirmation. Modal, not inline. Undo path when you can.
+---
+
+> **Source:** [gh-collab-manager/public/index.html](https://github.com/RogerSquare/gh-collab-manager) — repo reset, bulk remove
+> **Category:** Pattern — UX
+
+**Destructive action confirmation** — for anything irreversible (delete, reset, remove, purge), require the user to explicitly confirm. For especially dangerous actions, make them type something — the repo name, "DELETE", the exact value they're about to destroy. Three layers of friction; none of them optional.
+
+## The three tiers
+
+**Tier 1 — trivially reversible**: click, no confirm. Edit a field, toggle a setting, add a tag.
+
+**Tier 2 — recoverable with effort**: confirm dialog with Cancel/Continue. Delete a task, remove a collaborator (can re-add), close a PR. Users clicking "Continue" are committing but not burning anything.
+
+**Tier 3 — irreversible or massive blast radius**: typed confirmation. Delete a repo, reset all data, purge a user. User must type the exact target name to enable the button.
+
+## Tier 3 example
+
+```html
+<div class="confirm-modal">
+  <h3>Delete repo <code>RogerSquare/cairn</code>?</h3>
+  <p>This deletes the repo, all its issues, all its PRs, all its releases. GitHub keeps a 90-day recovery window; nothing else does.</p>
+  <label>Type <code>RogerSquare/cairn</code> to confirm:</label>
+  <input id="confirm-input" />
+  <button id="confirm-btn" disabled>Delete permanently</button>
+  <button id="cancel-btn">Cancel</button>
+</div>
+
+<script>
+  const target = 'RogerSquare/cairn';
+  const input = document.getElementById('confirm-input');
+  const btn = document.getElementById('confirm-btn');
+  input.addEventListener('input', () => {
+    btn.disabled = input.value !== target;
+  });
+</script>
+```
+
+Typed confirmation prevents muscle-memory mistakes: the user *has* to read the name and type it. No "click through" path.
+
+## Tier 2 example
+
+```html
+<div class="confirm-modal">
+  <h3>Remove Alice from 5 repos?</h3>
+  <ul>
+    <li>RogerSquare/atrium</li>
+    <li>RogerSquare/cairn</li>
+    <li>RogerSquare/Artifex</li>
+    <li>RogerSquare/kaleidoscope</li>
+    <li>RogerSquare/markstack</li>
+  </ul>
+  <p>Alice can be re-added later. Pending invitations will be canceled.</p>
+  <button>Cancel</button>
+  <button class="danger">Remove</button>
+</div>
+```
+
+No typing required; the list makes it visible.
+
+## Why all three tiers exist
+
+- **Tier 1** is the common case. Making the user confirm every edit is user-hostile.
+- **Tier 2** covers actions that are reversible by the owner (remove collaborator, archive project) but still commit an intention. Confirm dialog is the friction that prevents accidental clicks.
+- **Tier 3** is for things that cannot be undone or that affect data/people beyond the user. Typed confirmation prevents the specific failure mode where the user's muscle memory clicks "OK" on autopilot.
+
+## Common mistakes
+
+- **Inline confirm via `window.confirm()`.** Blocks the page, styles badly, can't show context, easy to muscle-click. Use a real modal.
+- **Typed confirmation with something generic.** "Type DELETE to confirm" works for one action; users start auto-typing DELETE. Use the *specific target name* so users have to read.
+- **No undo ever.** Even tier-3 actions can sometimes have an undo window. Soft-delete first, hard-delete after 7 days. Users who realize their mistake within minutes should have a path.
+- **Red button, no friction.** Color alone isn't enough. A big red "Delete" button without confirmation gets clicked.
+- **Confirm every trivial action.** Now every click is confirming. Users stop reading the confirmation dialogs; real destructive actions slide through.
+- **Confirmation as the only defense.** Rate limit bulk destructive operations server-side too. A compromised client could bypass the UI confirm.
+
+## Gotchas
+
+- **Case sensitivity on typed confirm.** `RogerSquare/cairn` is not the same as `rogersquare/cairn` — decide whether to case-fold before comparing. I'd say compare case-sensitively — the extra care is the point.
+- **Paste into the confirm input.** If the user copy-pastes the target name, did they really read it? Probably. Don't block paste.
+- **Keyboard navigation.** Enter in the confirm input shouldn't submit until the value matches. Escape always cancels.
+- **Focus the confirm input, not the Delete button.** Users who "just hit enter" shouldn't trigger the action.
+- **Confirm dialog visible by mistake.** Close on Escape or click-outside; don't strand the user in a dialog they can't escape.
+- **Dialog stacking.** A confirm-inside-a-confirm is a mess. Either dismiss the parent dialog first or render as one with clearer layout.
+- **Logging the decision.** If the action succeeds, log that it was confirmed (not silently the API call). Audit trail value.
+
+## See also
+
+- [patterns/multi-repo-bulk-operations](../multi-repo-bulk-operations/) — bulk ops are always tier 2 or tier 3
+- [patterns/audit-log-append-only-json](../audit-log-append-only-json/) — log what was confirmed
+- [projects/gh-collab-manager](../../projects/gh-collab-manager/)

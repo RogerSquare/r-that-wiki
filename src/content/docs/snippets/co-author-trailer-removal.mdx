@@ -1,0 +1,104 @@
+---
+title: Remove a Co-authored-by trailer from recent commits
+description: The git rebase / filter-branch recipe for scrubbing a Co-authored-by line. For when you accidentally co-authored to a bot.
+---
+
+> **Source:** [gh-collab-manager/server.js](https://github.com/RogerSquare/gh-collab-manager) — `/api/repos/:owner/:repo/remove-coauthor`
+> **Category:** Snippet — git
+
+**Co-author trailer removal** — Git's `Co-authored-by:` footer in commit messages drives GitHub's contributor attribution. Adding one on purpose is easy; removing one after the fact means rewriting commit messages. Here's the recipe.
+
+## The trailer
+
+A commit message with co-authorship looks like:
+
+```
+Fix admin project link field — normalize scheme on save
+
+The form used input type=url (required a scheme) but the renderer
+prepends https:// to whatever's stored.
+
+Co-authored-by: Claude Opus 4.6 (1M context) <noreply@anthropic.com>
+```
+
+GitHub reads `Co-authored-by:` lines in the last paragraph of a commit message and attributes the commit to both people.
+
+## Remove from the most recent commit
+
+```bash
+git commit --amend --message "$(git log -1 --pretty=%B | grep -v '^Co-authored-by:')"
+git push --force-with-lease
+```
+
+- `git log -1 --pretty=%B` — print the full message of HEAD
+- `grep -v '^Co-authored-by:'` — strip any line starting with that trailer
+- `--amend --message` — replace HEAD's message with the filtered one
+- `--force-with-lease` — safer force push (refuses if the remote has new commits)
+
+## Remove from the last N commits
+
+```bash
+git filter-branch --msg-filter 'grep -v "^Co-authored-by:"' HEAD~10..HEAD
+```
+
+Rewrites the last 10 commits, stripping the trailer from each. `filter-branch` is deprecated in modern git; use `git filter-repo` for anything bigger than a quick one-off.
+
+Modern equivalent with `git filter-repo`:
+
+```bash
+# Install: pip install git-filter-repo
+git filter-repo --message-callback '
+  return b"\n".join(
+    line for line in message.split(b"\n")
+    if not line.startswith(b"Co-authored-by:")
+  )
+'
+```
+
+## Remove one specific co-author, keep others
+
+```bash
+git filter-branch --msg-filter 'grep -v "^Co-authored-by: Bot Name <bot@example.com>"' HEAD~N..HEAD
+```
+
+Matches the exact trailer line. Use when you co-authored to one of several people and want to drop just one.
+
+## Programmatic (what gh-collab-manager does)
+
+```js
+async function removeCoauthor(owner, repo, coauthorEmail) {
+  const tmpDir = await fs.mkdtemp(join(tmpdir(), 'coauthor-'));
+  await execFileAsync('git', ['clone', `https://github.com/${owner}/${repo}`, tmpDir]);
+
+  await execFileAsync('git', [
+    '-C', tmpDir,
+    'filter-branch', '-f',
+    '--msg-filter',
+    `grep -v '^Co-authored-by:.*<${coauthorEmail}>$' || true`,
+    'HEAD~50..HEAD',
+  ]);
+
+  await execFileAsync('git', ['-C', tmpDir, 'push', '--force-with-lease', 'origin', 'main']);
+  await fs.rm(tmpDir, { recursive: true, force: true });
+}
+```
+
+`|| true` after grep handles the case where no lines match (grep exits 1); we want the filter to succeed even if nothing was filtered.
+
+## Gotchas
+
+- **This rewrites history.** Everyone who cloned the repo will have diverging history on their next pull. Fine for single-author personal repos; never do this on collaborative branches without coordination.
+- **`--force-with-lease`, not `--force`.** Lease refuses to overwrite new commits pushed by someone else; `--force` silently nukes them.
+- **CI runs again.** Every rewritten commit triggers its CI workflow. Be sure the workflow is idempotent and rate-limit friendly.
+- **PR references break.** If commits were referenced by SHA in issues / discussions, those links go dead. `filter-branch` changes every SHA from the rewrite point.
+- **Backup the repo first.** `cp -r repo repo.backup` or push a `backup-<date>` branch before doing this on anything you care about.
+- **The email match matters.** Different commit tools embed the bot email differently (display name variations, extra whitespace). Test the grep against real commits before running it destructively.
+- **Signed commits get unsigned.** `filter-branch` strips GPG signatures. Re-sign after or skip signed commits.
+- **`git filter-repo` is the modern tool.** `filter-branch` is deprecated for good reason — it's slow and has footguns. For ongoing use, install filter-repo.
+- **GitHub Actions attribution cache.** GitHub caches contributor lists; removing a coauthor doesn't immediately remove them from the UI. Give it 24 hours.
+
+## See also
+
+- [patterns/gh-cli-as-backend](../../patterns/gh-cli-as-backend/) — the wrapping pattern this sits inside
+- [patterns/execfile-not-exec-for-cli-wrappers](../../patterns/execfile-not-exec-for-cli-wrappers/) — how to spawn git safely
+- [projects/gh-collab-manager](../../projects/gh-collab-manager/)

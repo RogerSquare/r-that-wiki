@@ -1,0 +1,85 @@
+---
+title: execFile, not exec — the rule for wrapping CLIs safely
+description: "`exec` passes args through a shell and opens every CLI wrapper to injection. `execFile` does not. Use execFile."
+---
+
+> **Source:** [gh-collab-manager/server.js](https://github.com/RogerSquare/gh-collab-manager) — every `gh` invocation
+> **Category:** Pattern — security
+
+**execFile, not exec** — when a Node backend wraps a CLI (`gh`, `git`, `ffmpeg`, `docker`, anything), call it with `execFile(cmd, [args])`, not `exec('cmd ' + args)`. The first is injection-safe by construction; the second is trusting that every single arg you pass has been properly shell-escaped, which nobody does perfectly.
+
+## The difference
+
+**`exec`** runs the command through a shell (`/bin/sh -c ...`):
+
+```js
+const { exec } = require('child_process');
+exec(`gh api repos/${owner}/${repo}/collaborators/${user} -X PUT`, callback);
+```
+
+If `owner` is `'; rm -rf / #`, the shell does exactly what you'd expect.
+
+**`execFile`** spawns the binary directly, args as an array:
+
+```js
+const { execFile } = require('child_process');
+execFile('gh', ['api', `repos/${owner}/${repo}/collaborators/${user}`, '-X', 'PUT'], callback);
+```
+
+No shell. `owner` is a *single argument* — semicolons, quotes, spaces, backticks are all literal characters. The command reads them as part of an arg, not as shell syntax.
+
+## Why this pattern gets missed
+
+- **Every tutorial starts with `exec`.** It's the path of least resistance; it looks like calling a shell command.
+- **Interpolation feels natural.** Template literals that build a command string read cleanly. The shell is doing what you'd do at the terminal.
+- **Injection bugs are silent.** The code works in 99% of cases (usernames without special chars) and fails catastrophically in the 1%.
+
+## Shape
+
+```js
+const { execFile } = require('child_process');
+const { promisify } = require('util');
+const execFileAsync = promisify(execFile);
+
+async function gh(args, options = {}) {
+  const { stdout } = await execFileAsync('gh', args, {
+    maxBuffer: 10 * 1024 * 1024,
+    ...options,
+  });
+  try { return JSON.parse(stdout); } catch { return stdout; }
+}
+
+// Use it:
+const repos = await gh(['repo', 'list', '--json', 'name,owner']);
+await gh(['api', `repos/${owner}/${repo}/collaborators/${user}`, '-X', 'PUT']);
+```
+
+The user-controlled values (`owner`, `repo`, `user`) are interpolated into individual array elements — safe because no shell parses them.
+
+## When exec is OK
+
+- **Hardcoded commands** with no interpolation: `exec('make clean')` — fine.
+- **Shell features you explicitly want**: pipes, redirects, globbing. E.g. `exec('tar czf archive.tgz files/*')` uses shell globbing. Still prefer `execFile` with a Node-level glob if you can.
+- **Developer-only scripts** where you control every input. Even then, habit matters — scripts become production.
+
+## How it's used
+
+- **gh-collab-manager** — every `gh` invocation goes through execFile with args as array
+- **Atrium's AI chat dispatch** — `spawn('claude', [prompt], ...)` — same principle
+- **Any Node tool wrapping a CLI** — this is the universal rule
+
+## Gotchas
+
+- **`args` must be strings.** Numbers and booleans silently stringify to "42" / "true" — usually fine, occasionally surprising (`true` as a CLI flag is often unexpected).
+- **Args starting with `-`** are interpreted as flags even if they were meant as values. `execFile('rm', [userInput])` where `userInput === '-rf'` runs `rm -rf`. Use `--` to end flag parsing: `execFile('rm', ['--', userInput])`.
+- **Env vars pass through.** `execFile` inherits `process.env` unless you pass `{ env: {...} }`. Be aware of what's in scope.
+- **`maxBuffer` default is 1MB.** Large outputs (big git logs, large JSON responses) truncate silently. Bump to 10MB+ or stream via `spawn` instead.
+- **stderr is empty on success.** On failure, `execFile`'s rejection has `err.stderr`. Look there for useful error messages.
+- **`spawn` vs `execFile` vs `fork`.** `spawn` is the low-level primitive; `execFile` is `spawn` + capture-and-buffer; `fork` is for Node subprocesses. Use `execFile` unless you need streaming or don't want to buffer.
+- **Windows PATHEXT.** On Windows, `execFile('gh', ...)` might need `.exe` suffix depending on how `gh` is installed. Windows shells handle this; `execFile` doesn't unless you use `{ shell: true }` — which defeats the whole point.
+
+## See also
+
+- [patterns/gh-cli-as-backend](../gh-cli-as-backend/) — the broader pattern this snippet protects
+- [projects/gh-collab-manager](../../projects/gh-collab-manager/)
+- [patterns/ai-chat-dispatch-to-claude-cli](../ai-chat-dispatch-to-claude-cli/) — another consumer

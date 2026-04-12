@@ -1,0 +1,111 @@
+---
+title: Multi-repo bulk operations
+description: Doing the same thing to N repos at once. Progress per repo, partial failure handling, structured results. Not a one-liner.
+---
+
+> **Source:** [gh-collab-manager/server.js](https://github.com/RogerSquare/gh-collab-manager) — bulk collaborator add/remove
+> **Category:** Pattern — API design
+
+**Multi-repo bulk operations** — the user selects 15 repos and asks to add a collaborator to all of them. Doing it naively (one await at a time, fail the first error) produces a UX nightmare. The right shape: concurrent-with-limit, per-item status, surface the partial failures.
+
+## What it is
+
+A function that takes a list of targets and an operation; runs N in parallel (with a concurrency cap); collects per-target success/failure; returns a structured result the UI can render. The caller never sees "failed at repo #7; you're now in an unknown state".
+
+## Why it exists
+
+**The problem:** serial `for await` of N operations has three failure modes:
+
+1. **First error halts everything.** Success on repos 1-5, fail on 6, repos 7-15 never tried. User has to retry and deal with partial state.
+2. **No progress signal.** User clicks "Apply"; UI freezes for 30 seconds; either succeeds or fails with no intermediate visibility.
+3. **Full parallelism hits GitHub rate limits.** `await Promise.all(...)` fires 50 concurrent requests; GitHub secondary rate limit kicks in, most requests fail.
+
+**The fix:** bounded concurrency + per-item result tracking.
+
+## Shape
+
+```ts
+interface BulkResult<T> {
+  item: T;
+  status: 'success' | 'failure' | 'skipped';
+  error?: string;
+  result?: unknown;
+}
+
+async function bulkOp<T>(
+  items: T[],
+  op: (item: T) => Promise<unknown>,
+  options: { concurrency?: number; onProgress?: (done: number, total: number) => void } = {}
+): Promise<BulkResult<T>[]> {
+  const concurrency = options.concurrency ?? 3;
+  const results: BulkResult<T>[] = [];
+  let done = 0;
+
+  async function worker(queue: T[]) {
+    while (queue.length > 0) {
+      const item = queue.shift();
+      if (!item) break;
+      try {
+        const result = await op(item);
+        results.push({ item, status: 'success', result });
+      } catch (err: any) {
+        results.push({ item, status: 'failure', error: err.message });
+      }
+      done++;
+      options.onProgress?.(done, items.length);
+    }
+  }
+
+  const queue = [...items];
+  const workers = Array.from({ length: concurrency }, () => worker(queue));
+  await Promise.all(workers);
+  return results;
+}
+```
+
+Usage:
+
+```ts
+const results = await bulkOp(
+  selectedRepos,
+  (repo) => gh(['api', `repos/${repo.owner}/${repo.name}/collaborators/${username}`, '-X', 'PUT']),
+  {
+    concurrency: 3,
+    onProgress: (done, total) => socket.emit('progress', { done, total }),
+  }
+);
+
+const succeeded = results.filter(r => r.status === 'success').length;
+const failed = results.filter(r => r.status === 'failure');
+// Return { succeeded, failed: failed.map(f => ({ repo: f.item, error: f.error })) } to the client
+```
+
+## UX conventions
+
+- **"Applying to 15 repos..."** with a progress bar during the operation
+- **Result screen** shows *all* outcomes: "12 succeeded, 3 failed (click to expand)"
+- **Failed items** show the repo name and the error message — actionable info
+- **Retry individually** button on each failed item — don't force a full re-run
+
+## How it's used
+
+- **gh-collab-manager** — add/remove collaborator across selected repos; cancel invitations; update metadata
+- **Pattern generalizes** to any batch action across API-bounded resources
+
+## Gotchas
+
+- **Partial success is the norm.** Code and UX assume some items fail. Don't display "✅ Success" for the whole batch if even one failed.
+- **Concurrency cap matters.** GitHub's secondary rate limit kicks in around 10-15 concurrent requests from one user. 3-5 is safe; 2 is very safe.
+- **Progress granularity.** Emit progress per item, not per worker. Users want to see the counter increment.
+- **Timeout per item.** A single repo's API call hanging blocks the worker; other workers keep going, but one `await` stays stuck forever. Wrap each `op()` in a timeout: `Promise.race([op(item), timeout(30_000)])`.
+- **Cancellation.** If the user clicks Cancel mid-operation, the already-running API calls complete; new items don't start. `AbortController` on each call plus a queue-drain flag.
+- **Idempotence.** If the user retries after partial failure, the already-successful items should no-op. Most GitHub mutations are idempotent (PUT/DELETE) — but verify.
+- **Don't log the whole result server-side.** With 1000 items, the log becomes useless. Log counts + sample failures.
+- **Serialize the UI.** Don't let the user trigger another bulk op while one is running; disable the button and show progress.
+- **Deterministic order.** Return results in the input order (not completion order) so the UI's "3 failed" matches the user's mental model of which ones.
+
+## See also
+
+- [patterns/gh-cli-as-backend](../gh-cli-as-backend/) — the CLI layer this dispatches to
+- [patterns/destructive-action-confirmation](../destructive-action-confirmation/) — the guard rail before the bulk op runs
+- [projects/gh-collab-manager](../../projects/gh-collab-manager/)
