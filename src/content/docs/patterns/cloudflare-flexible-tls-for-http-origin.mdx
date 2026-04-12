@@ -1,0 +1,82 @@
+---
+title: Cloudflare Flexible TLS for an HTTP origin
+description: Your origin can't do HTTPS. Cloudflare can. Pick "Flexible" mode, accept the trade-off, move on.
+---
+
+> **Source:** `wiki.r-that.com` setup — [feat-wiki-deploy-001](../../projects/cairn/#deployment)
+> **Category:** Pattern — TLS / DNS
+
+**Cloudflare Flexible TLS** — a Cloudflare SSL mode that terminates HTTPS at the Cloudflare edge and speaks plain HTTP to your origin. Perfect for origins that can't run TLS themselves; terrible if you mistake it for end-to-end encryption.
+
+## What it is
+
+Cloudflare's SSL/TLS encryption modes control how Cloudflare talks to your origin:
+
+- **Off** — no TLS anywhere
+- **Flexible** — HTTPS user ↔ Cloudflare, **HTTP** Cloudflare ↔ origin
+- **Full** — HTTPS both hops, Cloudflare ignores origin cert validity
+- **Full (strict)** — HTTPS both hops, origin cert must be valid
+
+Flexible is the "Cloudflare is my TLS" mode. User's browser sees HTTPS, bar is green, everyone's happy. Behind the scenes, the edge-to-origin leg is unencrypted HTTP over the internet.
+
+## Why it exists
+
+**The problem:** Setting up TLS on a self-hosted origin is non-trivial:
+
+1. **Let's Encrypt / certbot** — works, free, but requires port 80 for HTTP-01 verification and renewal hooks
+2. **Cloudflare Origin Certificate** — Cloudflare-signed cert, only trusted between CF and your origin; good option if you'll stay on Cloudflare
+3. **Commercial cert** — money + yearly renewal
+
+All of these are *more setup* than "enable proxy and flip the SSL switch".
+
+**The fix:** Flexible. Zero origin-side TLS config. Users get HTTPS via Cloudflare's free certs on *.example.com or your apex domain. The hop from CF to your box is whatever HTTP you have running already.
+
+## When it's fine
+
+- **Personal projects on a self-hosted box** — no sensitive data, just web content
+- **Pre-launch or prototype** — get TLS working today, upgrade to Full (strict) later
+- **Origin behind firewall** — only Cloudflare IPs can reach your origin; no one else sniffs the HTTP leg
+
+## When it's not fine
+
+- **You handle user credentials or payments** — anyone between Cloudflare and your origin can read the plaintext. "Anyone" includes Cloudflare's internal network and whatever sits between your origin and the nearest Cloudflare datacenter.
+- **You're compliance-scoped** (HIPAA, PCI) — Flexible almost certainly fails. Go Full (strict) with a real cert or an [Origin Certificate](../cloudflare-origin-certificate/).
+- **Mixed content issues** — the origin may hardcode HTTP URLs that show up in the user's browser as insecure. Cloudflare's "Automatic HTTPS Rewrites" helps but doesn't catch everything.
+
+## Enabling it
+
+1. Cloudflare dashboard → your zone → **SSL/TLS → Overview**
+2. Under "SSL/TLS encryption mode", select **Flexible**
+3. Save; propagation is immediate
+
+Per-zone setting. You can't do "Flexible for the wiki subdomain, Full for root" without [Configuration Rules](https://developers.cloudflare.com/rules/configuration-rules/) or a separate zone.
+
+## Migration to Full (strict) later
+
+When you're ready:
+1. Install a cert on the origin (Let's Encrypt, Cloudflare Origin Cert)
+2. Configure nginx to serve HTTPS on 443
+3. Cloudflare → SSL/TLS → switch to **Full (strict)**
+4. Test every route; common bug is origin cert missing a SAN
+
+See [cloudflare-origin-certificate](../cloudflare-origin-certificate/) for the Origin Cert path.
+
+## How it's used
+
+- **wiki.r-that.com** — Flexible; origin is plain nginx on port 80, no TLS
+- **Pattern generalizes** to any Cloudflare-proxied hostname with an HTTP-only origin
+
+## Gotchas
+
+- **522 Connection Timed Out** from Cloudflare usually means SSL mode is Full or Full (strict) but the origin can't serve HTTPS. Switching to Flexible fixes this instantly.
+- **Your origin can still get bypass traffic.** If someone knows your origin IP and hits it directly (bypassing Cloudflare), they see HTTP. Firewall origin to Cloudflare IPs if this matters.
+- **Redirect loops.** If the origin does a `Location: https://...` redirect on HTTP requests (expecting to be reached directly), Cloudflare re-sends to origin as HTTP, origin redirects again, infinite loop. Remove the HTTPS redirect on the origin, or use Full mode.
+- **`Trust proxy` for client IP.** Your app sees Cloudflare's IP, not the user's. Read `CF-Connecting-IP` header (Cloudflare-specific) or `X-Forwarded-For`. Set `app.set('trust proxy', ...)` in Express.
+- **Cookies marked `Secure`** only go over HTTPS. Flexible looks like HTTPS to the browser; the cookie is set fine. Origin may not realize the original request was HTTPS — pass `X-Forwarded-Proto: https` if your framework needs the hint.
+- **Don't store this decision implicitly.** Document in the repo README that the site uses Flexible. Next operator wondering why there's no cert on the origin wastes an afternoon.
+
+## See also
+
+- [patterns/cloudflare-orange-vs-grey-cloud](../cloudflare-orange-vs-grey-cloud/) — when proxy is on vs off
+- [patterns/cloudflare-origin-certificate](../cloudflare-origin-certificate/) — the upgrade path
+- [snippets/nginx-reverse-proxy-with-node-backend](../../snippets/nginx-reverse-proxy-with-node-backend/)

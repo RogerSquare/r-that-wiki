@@ -1,0 +1,72 @@
+---
+title: scp — install SSH pubkey from Windows PowerShell
+description: The PowerShell pipe encoding trick that breaks `type pub.key | ssh ... >> authorized_keys`. Use scp instead.
+---
+
+> **Source:** ssh setup for automation against r-that.com
+> **Category:** Snippet — ssh / windows
+
+**scp pubkey install on Windows** — the canonical "install my public key on the remote" one-liner uses a pipe. On Windows PowerShell, the pipe encoding subtly corrupts the key. `scp` sidesteps the problem entirely.
+
+## The problem
+
+On Linux/macOS, the standard recipe:
+
+```bash
+cat ~/.ssh/id_ed25519.pub | ssh user@host "cat >> ~/.ssh/authorized_keys"
+```
+
+This works because the local shell's stdout is bytes, unchanged through the pipe.
+
+On Windows PowerShell:
+
+```powershell
+type $HOME\.ssh\id_ed25519.pub | ssh user@host "cat >> ~/.ssh/authorized_keys"
+```
+
+Looks right. **Doesn't work.** PowerShell's pipe defaults to UTF-16 encoding, sometimes with BOM, always with CR LF line endings. OpenSSH's authorized_keys parser expects LF, no BOM, UTF-8. The key lands but silently fails to authenticate — and you spend a confusing hour.
+
+## The fix
+
+Use scp:
+
+```powershell
+scp -P 2200 $HOME\.ssh\id_ed25519.pub root@host:/tmp/newkey.pub
+ssh -p 2200 root@host "cat /tmp/newkey.pub >> ~/.ssh/authorized_keys && rm /tmp/newkey.pub && chmod 600 ~/.ssh/authorized_keys && chmod 700 ~/.ssh"
+```
+
+Two commands:
+1. `scp` copies the file byte-for-byte — no encoding translation
+2. `ssh` runs a remote command that appends the key, cleans up the temp file, and sets the correct permissions
+
+## Verify
+
+```powershell
+ssh -p 2200 -o BatchMode=yes root@host "hostname"
+```
+
+`BatchMode=yes` disables password prompts. If you see the remote hostname, key auth is working. If you see `Permission denied (publickey)`, something else is off (wrong key loaded, not in `authorized_keys` path, permissions wrong).
+
+## Why not fix the pipe?
+
+You can:
+
+```powershell
+$env:LC_ALL = 'C.UTF-8'
+[System.IO.File]::ReadAllBytes("$HOME\.ssh\id_ed25519.pub") | ssh ...
+```
+
+But scp is shorter, clearer, and doesn't depend on the exact PowerShell version getting encoding right. Prefer scp.
+
+## Gotchas
+
+- **Capital `-P` for scp, lowercase `-p` for ssh.** One of life's minor annoyances; inconsistent between the two tools.
+- **Permissions matter.** SSH refuses to use an `authorized_keys` that's world-readable. `chmod 600 authorized_keys` and `chmod 700 ~/.ssh` are part of the install.
+- **`StrictHostKeyChecking`.** First connect prompts about the host fingerprint. With `BatchMode=yes`, the prompt is disabled and the connect fails. Run a plain `ssh root@host` once first to accept the fingerprint.
+- **Key comment preserved.** The trailing `comment` field of a pub key (e.g. `user@laptop`) is informational but useful. scp preserves it; some copy-paste methods truncate.
+- **Multiple keys per user.** `authorized_keys` can hold many. Appending is fine. Replacing means risking locking yourself out — only do that with console access as a safety net.
+- **`ssh-copy-id`.** On macOS/Linux (and Windows with the OpenSSH client installed), `ssh-copy-id -i ~/.ssh/id_ed25519.pub -p 2200 root@host` is the purpose-built tool. PowerShell often doesn't include it; scp is the universally-available fallback.
+
+## See also
+
+- [snippets/deploy-script-via-ssh](../deploy-script-via-ssh/) — where automated ssh calls go after key auth works

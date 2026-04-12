@@ -1,0 +1,108 @@
+---
+title: Deploy script — one command from anywhere
+description: A shell script at `/usr/local/bin/deploy-<app>` that pulls, installs, builds, and syncs. Invoke from laptop via ssh.
+---
+
+> **Source:** `/usr/local/bin/deploy-wiki` on r-that.com
+> **Category:** Snippet — deployment
+
+**Deploy script via ssh** — one shell script on the VPS that does the whole deploy. From your laptop: `ssh root@host deploy-wiki`. Simple, reliable, scriptable, and serves as documentation.
+
+## Shape
+
+```bash
+#!/bin/bash
+# /usr/local/bin/deploy-wiki
+# Deploy rog-wiki to /var/www/wiki. Pulls, installs, builds, syncs.
+
+set -euo pipefail
+
+REPO_DIR=/opt/rog-wiki
+WEB_DIR=/var/www/wiki
+
+# First-run clone if the repo isn't there yet
+if [ ! -d "$REPO_DIR" ]; then
+  git clone https://github.com/RogerSquare/rog-wiki.git "$REPO_DIR"
+fi
+
+cd "$REPO_DIR"
+git pull --ff-only
+npm ci --no-audit --no-fund
+npm run build
+rsync -a --delete dist/ "$WEB_DIR/"
+chown -R www-data:www-data "$WEB_DIR"
+
+echo "Deployed: $(git rev-parse --short HEAD)"
+```
+
+## Install
+
+```bash
+sudo nano /usr/local/bin/deploy-wiki       # paste the script
+sudo chmod +x /usr/local/bin/deploy-wiki
+```
+
+## Use from laptop
+
+```bash
+# Manual trigger
+ssh -p 2200 root@r-that.com "deploy-wiki"
+
+# With an alias (~/.ssh/config)
+# Host vps
+#   HostName r-that.com
+#   User root
+#   Port 2200
+# Then:
+ssh vps deploy-wiki
+```
+
+Output includes the deployed commit sha — confirmation the right version is live.
+
+## Shape for multiple apps
+
+One script per app keeps things explicit:
+
+```bash
+/usr/local/bin/deploy-wiki       # static site, rsync
+/usr/local/bin/deploy-portfolio  # Node service, git pull + systemctl restart
+/usr/local/bin/deploy-gallery    # app with DB migrations, different flow
+```
+
+Don't try to make one universal "deploy" script with flags — the differences between apps become hidden behind knobs you have to remember.
+
+## Variant: service-restart flavor (not rsync)
+
+For a Node service rather than static files:
+
+```bash
+#!/bin/bash
+set -euo pipefail
+
+cd /opt/portfolio
+git pull --ff-only
+cd ts
+npm ci --no-audit --no-fund
+sudo systemctl restart portfolio.service portfolio-web.service
+echo "Deployed: $(git rev-parse --short HEAD)"
+```
+
+Skip the `npm run build` line — Cairn's TS runs directly via tsx; no build step. Include or skip per-app.
+
+## Gotchas
+
+- **`set -euo pipefail` is non-optional.** Without `-e`, a failed `git pull` doesn't stop the script and you `npm ci` on the wrong commit. `-u` catches typos in variable names. `-o pipefail` catches failures in pipelines.
+- **`git pull --ff-only`.** Never accept a merge during a deploy. If history has diverged, the deploy aborts and you fix it manually — better than silently creating a merge commit in prod.
+- **`npm ci`, not `npm install`.** `ci` respects the lockfile exactly; `install` can update it. Deploys should be deterministic.
+- **Ownership after sync.** `rsync -a` preserves the local owner, which is usually your ssh user. Web servers need `www-data` or equivalent — `chown` after the sync.
+- **Running as root.** Deploy script often runs as root. Dangerous if it has a bug. Drop privileges where possible: `sudo -u deploy-user`.
+- **Log where it ran.** Echo the commit sha at the end; prepend timestamps if you redirect output. `deploy-wiki 2>&1 | tee -a /var/log/deploy.log` for an audit trail.
+- **Idempotence.** Running the script twice in a row should produce the same end state. Avoid anything that mutates state non-idempotently (e.g. `echo >> config` without a dedupe check).
+- **Env var compatibility.** ssh commands don't inherit your laptop's `$PATH` unless `/usr/local/bin` is in the remote user's default path. `ssh host deploy-wiki` may fail "command not found" if deploy-wiki isn't in PATH for the ssh user's shell.
+- **Don't auto-trigger from CI without review.** A broken push to main triggers the deploy; bad code ships. Either require a manual trigger or add CI gating.
+
+## See also
+
+- [patterns/vps-deploy-runbook-shape](../../patterns/vps-deploy-runbook-shape/) — the doc this script implements
+- [patterns/rsync-atomic-swap-dist](../../patterns/rsync-atomic-swap-dist/) — upgrade path for zero-window deploys
+- [snippets/systemd-drop-in-env-var](../systemd-drop-in-env-var/)

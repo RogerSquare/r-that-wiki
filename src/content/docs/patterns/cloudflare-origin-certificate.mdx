@@ -1,0 +1,99 @@
+---
+title: Cloudflare Origin Certificate — upgrading from Flexible to Full (strict)
+description: A cert Cloudflare issues, valid only between Cloudflare and your origin. Free, 15-year lifespan, no Let's Encrypt automation.
+---
+
+> **Source:** feat-wiki-deploy-001 follow-up
+> **Category:** Pattern — TLS
+
+**Cloudflare Origin Certificate** — Cloudflare issues you a cert signed by Cloudflare's own CA. It's trusted only between Cloudflare's edge and your origin (browsers don't trust it directly). Use it when you want true Full (strict) TLS without the Let's Encrypt automation dance.
+
+## What it is
+
+A standard TLS cert, issued through the Cloudflare dashboard, valid for up to 15 years. You install it on your origin (nginx, Caddy, whatever) just like any other cert. Cloudflare's edge trusts it implicitly. Direct-to-origin connections (bypassing Cloudflare) would get a cert warning — that's the point, it forces traffic through Cloudflare.
+
+## Why it exists
+
+**The problem:** You're on Cloudflare with [Flexible TLS](../cloudflare-flexible-tls-for-http-origin/), but you want:
+1. End-to-end encryption (not just user ↔ Cloudflare)
+2. Compliance (Flexible fails a lot of audits)
+3. Defense in depth
+
+Options:
+- **Let's Encrypt** — free, universally trusted, requires renewal every 90 days, needs port 80 accessible for HTTP-01 challenge. If your origin is only exposed to Cloudflare, HTTP-01 doesn't work; you need DNS-01.
+- **Commercial cert** — money, yearly renewal, same universal trust.
+- **Cloudflare Origin Certificate** — free, 15 years, zero automation, but not publicly trusted.
+
+**The fix:** when your origin only serves Cloudflare (which is the case when the hostname is orange-cloud), Cloudflare trust is all you need. Origin cert skips Let's Encrypt's complexity entirely.
+
+## Issue + install
+
+### On Cloudflare
+
+1. Zone → SSL/TLS → **Origin Server** → **Create Certificate**
+2. Key type: ECC (smaller, faster) or RSA
+3. Hostnames: your origin domain (and any Subject Alternative Names)
+4. Validity: 15 years is default and fine
+5. Get two PEM blobs: the cert and the private key. **Download both; Cloudflare won't show them again.**
+
+### On the origin (nginx)
+
+```bash
+sudo mkdir -p /etc/ssl/cloudflare
+sudo nano /etc/ssl/cloudflare/origin.pem     # paste the cert
+sudo nano /etc/ssl/cloudflare/origin.key     # paste the key
+sudo chmod 600 /etc/ssl/cloudflare/origin.key
+sudo chmod 644 /etc/ssl/cloudflare/origin.pem
+```
+
+```nginx
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name r-that.com;
+
+    ssl_certificate     /etc/ssl/cloudflare/origin.pem;
+    ssl_certificate_key /etc/ssl/cloudflare/origin.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    # ... existing server config (proxy_pass, root, etc.)
+}
+
+# Redirect HTTP to HTTPS
+server {
+    listen 80;
+    server_name r-that.com;
+    return 301 https://$host$request_uri;
+}
+```
+
+### On Cloudflare (again)
+
+Switch SSL/TLS mode to **Full (strict)**. Cloudflare will now validate the origin cert; since it's signed by Cloudflare's own CA, validation succeeds.
+
+## When to skip this pattern
+
+- **Let's Encrypt already set up** — don't fix what isn't broken. Full (strict) works with Let's Encrypt certs too.
+- **You serve non-Cloudflare clients directly** — Origin Cert warns everyone else. Use a real cert.
+- **You're leaving Cloudflare** — Origin Cert only works through Cloudflare; moving off requires a new cert anyway.
+
+## Gotchas
+
+- **Not publicly trusted.** Anyone who connects to the origin directly (bypassing Cloudflare) sees a cert warning. Firewall the origin to Cloudflare IP ranges to enforce "only through CF".
+- **Private key loss is game over.** Cloudflare doesn't store the private key. Lose it, regenerate the cert. Treat it like any production secret.
+- **Renewal isn't automatic.** 15 years is a long time, but set a calendar reminder for year 14. Document the renewal process in your runbook.
+- **Can't use for MX/mail.** Origin Cert is for HTTP(S) through Cloudflare. Other protocols need a real cert.
+- **CAA records.** If you have DNS CAA records limiting who can issue certs for your domain, Cloudflare needs to be included. For Origin certs, the CAA check is Cloudflare-internal and usually fine.
+- **Firewall enforcement.** Even with Origin Cert, if port 443 on the origin is open to the world, anyone who discovers the IP can try to connect (and will fail cert validation, but can still DoS). Restrict to Cloudflare IPs.
+- **SAN coverage.** Origin Cert can include multiple hostnames. Add every subdomain you'll serve from this origin in the SAN list at issue time; adding later requires re-issuing.
+
+## How it's used
+
+- **Pattern queued** for Cairn's eventual upgrade from Flexible to Full (strict) on the wiki subdomain
+- **Pattern applies** to any Cloudflare-proxied origin wanting end-to-end TLS without Let's Encrypt
+
+## See also
+
+- [patterns/cloudflare-flexible-tls-for-http-origin](../cloudflare-flexible-tls-for-http-origin/) — the mode this replaces
+- [patterns/cloudflare-orange-vs-grey-cloud](../cloudflare-orange-vs-grey-cloud/) — prerequisite: orange cloud
+- [snippets/nginx-reverse-proxy-with-node-backend](../../snippets/nginx-reverse-proxy-with-node-backend/)

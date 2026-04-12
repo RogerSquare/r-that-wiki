@@ -1,0 +1,123 @@
+---
+title: VPS deploy runbook — the 3-line happy path
+description: A deployment doc that's useful six months from now has three sections. Here's what each one says.
+---
+
+> **Source:** cairn [README deployment section](https://github.com/RogerSquare/cairn/blob/main/README.md#deployment)
+> **Category:** Pattern — docs
+
+**VPS deploy runbook** — a deployment doc optimized for "I haven't touched this in six months and I need to ship a fix". Three sections, always in this order: **happy path**, **scenarios**, **rollback**. Everything else goes elsewhere.
+
+## What it is
+
+The structure of the doc:
+
+```
+## Deployment
+
+### VPS layout
+(table of paths, service names, ports, DNS config)
+
+### Happy path deploy
+(the 3 commands that work 95% of the time)
+
+### Common scenarios
+(branching from happy path for: content-only, deps changed, migration needed)
+
+### Debugging
+(how to tail logs, check service status)
+
+### Rollback
+(the exact commands to back out a broken deploy)
+```
+
+## Why it exists
+
+**The problem:** Deployment docs that people actually read have two failure modes:
+
+1. **Too comprehensive** — every possible scenario documented upfront, so finding the common case is hard
+2. **Too minimal** — three commands pasted into a README, no context, breaks when anything is off
+
+**The fix:** structure optimized for the stressed-at-midnight reader. The happy path is load-bearing. Everything else is there for when the happy path isn't enough.
+
+## Cairn's deploy runbook — the shape
+
+### 1. VPS layout (reference table)
+
+```
+| Thing                 | Value                                               |
+|-----------------------|-----------------------------------------------------|
+| Repo path on VPS      | /opt/portfolio (run from /opt/portfolio/ts)         |
+| Mutable data dir      | /var/lib/cairn (via CAIRN_DATA_DIR env var)         |
+| SSH portfolio service | portfolio.service (port 22)                         |
+| Web server service    | portfolio-web.service (port 3000, behind nginx)     |
+| Reverse proxy         | nginx                                               |
+| Admin SSH             | ssh -p 2200 <user>@r-that.com                       |
+```
+
+### 2. Happy path (copy-pasteable)
+
+```bash
+ssh -p 2200 <user>@r-that.com
+cd /opt/portfolio && git pull
+sudo systemctl restart portfolio.service portfolio-web.service
+```
+
+Three commands. Reader can scroll past everything else if this is all they need.
+
+### 3. Scenarios (branches from happy path)
+
+```
+**Changed ts/data.json (content only):** just the 3 commands above.
+**Added a blog post in ts/posts/:** same 3 commands.
+**Changed ts/src/*.ts:** same 3 commands.
+**Changed ts/package.json (added a dependency):**
+  cd /opt/portfolio/ts && npm install
+  sudo systemctl restart portfolio.service portfolio-web.service
+```
+
+### 4. Debugging
+
+```bash
+sudo journalctl -u portfolio-web.service -f
+sudo journalctl -u portfolio.service -f
+systemctl status portfolio.service portfolio-web.service
+```
+
+### 5. Rollback (the most important section for a bad day)
+
+```bash
+cd /opt/portfolio
+git log --oneline -5                      # find the last good commit
+git reset --hard <good-commit-sha>
+sudo systemctl restart portfolio.service portfolio-web.service
+```
+
+Plus: if `ssh r-that.com` itself is broken, admin SSH on port 2200 still works. Never lock yourself out with a single path.
+
+## How it's used
+
+- **Cairn** — README section
+- **Pattern generalizes** to any production deploy runbook
+
+## Gotchas
+
+- **Assume zero context for the reader.** "It" is you in six months. Don't rely on memory of what's where.
+- **Every path literal.** `/opt/portfolio` not "your deploy directory". `ssh -p 2200` not "your admin port".
+- **No hand-waving.** "Rebuild if needed" is not useful. Either "no rebuild needed" or the exact command.
+- **Happy path must be copy-pasteable.** No placeholders the reader has to think about. Fill in `<user>` if needed, but literally everything else is concrete.
+- **Rollback must not require the deploy to have succeeded.** A `git pull` that partially applied, a service that won't restart — rollback works from a broken state.
+- **Keep it flat.** Deep nesting of sub-sections loses readers. Two heading levels max (## for the structure, ### for sections).
+- **Timestamps on when this was last verified.** "Last tested YYYY-MM-DD" at the top of each section catches drift.
+- **Don't duplicate the happy path elsewhere.** The README shouldn't say one thing and a wiki another. One source of truth.
+- **Secrets don't go in the runbook.** Refer to env vars; keep actual values in a secrets store or the admin's head.
+
+## Follow-up: verify the runbook on a fresh account
+
+Best way to test a deploy doc is to follow it yourself from a cold start. Delete the VPS, provision a fresh one, run through the runbook top-to-bottom without improvising. Everywhere you had to make something up or guess, update the doc.
+
+## See also
+
+- [projects/cairn](../../projects/cairn/) — where this pattern ships
+- [snippets/deploy-script-via-ssh](../../snippets/deploy-script-via-ssh/) — the script that automates the happy path
+- [snippets/systemd-drop-in-env-var](../../snippets/systemd-drop-in-env-var/) — a common section referenced by the runbook

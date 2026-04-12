@@ -1,0 +1,84 @@
+---
+title: Defensive git pull — stash, pull, pop
+description: A `git pull` that doesn't lose local changes. Stash before, pop after. One-line wrapper.
+---
+
+> **Source:** cairn VPS recovery — pulled after admin CMS had edited tracked files
+> **Category:** Snippet — git
+
+**Defensive git pull** — wrap `git pull` in `git stash` on the way in and `git stash pop` on the way out. If the pull fails or the working tree has uncommitted changes, those changes are preserved and re-applied. Safer default for production boxes where the working tree might have been mutated by the running app.
+
+## When you need this
+
+- **Runtime-mutable tracked files.** An admin CMS writes to `data.json`; next `git pull` aborts because of local changes. Before you discover [cairn-data-dir](../../patterns/cairn-data-dir/), this workaround keeps deploys working.
+- **Hot-patches on the VPS.** You SSH in to fix a typo, forget to commit, pull a week later, pull aborts.
+- **Package-lock drift.** `npm install` on the VPS updates `package-lock.json` (bad idea, but happens); next `git pull` can't fast-forward.
+
+## Shape
+
+```bash
+#!/bin/bash
+# git-pull-safe - pull, preserving any local changes
+set -euo pipefail
+
+# Capture whether there were changes to stash
+STASH_MSG="pre-pull-$(date +%Y%m%d-%H%M%S)"
+CHANGES=$(git status --porcelain)
+
+if [ -n "$CHANGES" ]; then
+  git stash push --include-untracked --message "$STASH_MSG"
+  HAD_CHANGES=1
+else
+  HAD_CHANGES=0
+fi
+
+git pull --ff-only
+
+if [ "$HAD_CHANGES" = "1" ]; then
+  # Find the stash we just created
+  STASH_REF=$(git stash list | grep "$STASH_MSG" | head -1 | cut -d: -f1)
+  if [ -n "$STASH_REF" ]; then
+    git stash pop "$STASH_REF" || echo "Conflict on stash pop — local changes preserved in stash"
+  fi
+fi
+```
+
+Install at `/usr/local/bin/git-pull-safe`, `chmod +x`, then:
+
+```bash
+cd /opt/portfolio
+git-pull-safe
+```
+
+## Why the complexity
+
+A naive `git stash && git pull && git stash pop` has failure modes:
+- If there's nothing to stash, `pop` pops an unrelated stash from another session
+- If `pop` conflicts, the script doesn't tell you
+- If `pull` fails, you still `pop` and re-create the problem
+
+The shape above:
+1. **Checks if there are changes first** (only stashes if needed)
+2. **Names the stash** so it can find exactly the one it made
+3. **Uses `--include-untracked`** so new files aren't silently dropped
+4. **Gracefully reports conflicts** on pop rather than silently corrupting
+
+## When you *shouldn't* use this
+
+- **Deploy scripts for a clean-tree repo.** If the VPS's repo is supposed to match main exactly, a stash-wrap masks the real bug (why is the tree dirty?). Prefer `git reset --hard origin/main` after backing up the dirty files.
+- **Production data in tracked files.** The better long-term fix is to move mutable data out of the repo ([cairn-data-dir](../../patterns/cairn-data-dir/)). The stash wrap is a *bridge*, not a destination.
+- **Multi-worker setups.** If multiple processes could be invoking git in the same repo, stash can race. Use a lock file.
+
+## Gotchas
+
+- **`--include-untracked`.** Without it, new untracked files are not stashed. A file the CMS created yesterday that has never been tracked gets deleted if the incoming commit deletes its parent dir.
+- **`stash pop` conflicts.** When the pulled commits touch the same lines as your stashed changes, `stash pop` creates conflict markers in the working tree. Resolve manually or `git stash drop` to abandon.
+- **Never `stash drop` automatically.** If pop conflicts, the stash is still preserved — you can `git stash show`, `git stash apply` again, etc. Don't destroy it in the script.
+- **Message must be unique** within your timeframe. The `$(date ...)` makes it so; without that, `grep` could match another stash.
+- **Interactive prompts.** `git pull` can invoke an editor for a merge commit if history diverges. `--ff-only` prevents that; the script aborts instead, which is correct.
+- **Credentials.** If the pull needs a password (unlikely with SSH keys but happens with HTTPS), the stash wrap doesn't help — the script hangs waiting for input. Prefer deploy keys.
+
+## See also
+
+- [patterns/cairn-data-dir](../../patterns/cairn-data-dir/) — the real fix; don't make tracked files runtime-mutable
+- [snippets/deploy-script-via-ssh](../deploy-script-via-ssh/) — where this might be called

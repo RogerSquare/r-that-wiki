@@ -1,0 +1,83 @@
+---
+title: Cloudflare orange vs grey cloud — when proxy is on or off
+description: Orange = Cloudflare proxies the traffic (TLS, DDoS, caching). Grey = DNS only, direct to origin. Pick per hostname based on what that hostname serves.
+---
+
+> **Source:** r-that.com DNS setup — root grey, subdomains orange
+> **Category:** Pattern — DNS
+
+**Orange vs grey cloud** — each DNS record in a Cloudflare zone has a cloud icon. Orange means the record is proxied (Cloudflare terminates connections, then forwards to origin). Grey means Cloudflare is only answering DNS — the client connects directly to the origin IP.
+
+## What it is
+
+On every DNS record in Cloudflare, a single toggle:
+- **Orange cloud (proxied)** — Cloudflare intercepts HTTP/HTTPS on the common ports (80/443 + a short list), provides TLS, DDoS mitigation, caching, WAF, analytics
+- **Grey cloud (DNS only)** — just resolves the name to the IP. Everything else is direct
+
+## Why it exists
+
+A domain rarely serves only HTTP. An SSH server, a game server, a mail server, an IoT device — each is a different application, each has different needs. Cloudflare's free-tier proxy covers HTTP/HTTPS well; for everything else you need direct.
+
+The cloud toggle is per-record, so you can mix modes per subdomain.
+
+## Rule of thumb
+
+| Service on this hostname | Cloud |
+|---|---|
+| HTTP/HTTPS web app | **orange** (free TLS, DDoS) |
+| SSH (port 22) | **grey** (Cloudflare doesn't proxy SSH on free plan) |
+| Game server (UDP, custom ports) | **grey** |
+| Mail server (SMTP, IMAP) | **grey** |
+| HTTP app behind a real cert you manage | orange with Full/Full(strict), or grey if you don't need CF features |
+
+## Cairn's r-that.com setup
+
+```
+Record              Type  Cloud   Purpose
+r-that.com          A     grey    Portfolio web (port 80) + SSH (port 22)
+wiki.r-that.com     A     orange  Wiki (proxied, Flexible TLS)
+photos.r-that.com   A     orange  Immich (proxied, Flexible TLS)
+```
+
+Root is grey because `ssh r-that.com` has to work — Cloudflare wouldn't forward port 22 anyway. The web portfolio on that hostname sacrifices proxied TLS and runs HTTP-only; acceptable for a personal portfolio.
+
+Subdomains that don't need SSH are orange and get TLS for free.
+
+## Consequences of each choice
+
+**Orange (proxied):**
+- ✅ Free TLS, automatic
+- ✅ DDoS mitigation
+- ✅ Analytics (IP geolocation, bot detection)
+- ✅ Caching and edge workers
+- ❌ DNS resolves to Cloudflare edge IPs, not origin
+- ❌ Only HTTP/HTTPS ports forwarded (80, 443, + handful of others)
+- ❌ Origin IP obscured from the internet (which is a good thing for defense)
+
+**Grey (DNS only):**
+- ✅ All ports reachable (SSH, mail, whatever)
+- ✅ No interception of TLS (good if you want end-to-end)
+- ❌ No DDoS protection
+- ❌ No free TLS from Cloudflare
+- ❌ Origin IP visible publicly (DNS queries return it)
+
+## How it's used
+
+- **Cairn** — the DNS setup described above ships the SSH portfolio on a grey root + proxied subdomains for HTTP-only services
+- **Pattern generalizes** to any Cloudflare-zoned domain serving mixed protocols
+
+## Gotchas
+
+- **Accidentally orange on an SSH host.** Visitors run `ssh hostname`, it hangs. Cloudflare doesn't forward SSH, grey cloud is mandatory. Easy to fix, painful when you miss it.
+- **`dig` confirms the state.** Orange cloud → DNS returns `104.21.x.x` / `172.67.x.x` (Cloudflare edge). Grey cloud → DNS returns your origin IP. If unsure, `dig <hostname> +short` gives the answer.
+- **MX records are DNS-only by default.** You can't proxy mail through Cloudflare's standard offering. Cloudflare Email Routing is separate.
+- **Switching grey → orange after cert setup.** If your origin already has a real cert and you switch to orange with Full (strict), you need Cloudflare to trust the origin cert. Most origin certs work; self-signed ones don't unless you use Cloudflare Origin Cert.
+- **Cloudflare Spectrum** (paid) can proxy arbitrary TCP/UDP ports including SSH. Not in the free tier; not relevant for personal setups.
+- **Per-record, not per-zone.** No way to say "orange for everything". Either toggle each record manually or use the Cloudflare API / Terraform.
+- **Cache on proxied requests bites HTML responses.** Cloudflare caches aggressive by default; if your app serves personalized HTML from the same URL, configure page rules or add `Cache-Control: private`.
+
+## See also
+
+- [patterns/cloudflare-flexible-tls-for-http-origin](../cloudflare-flexible-tls-for-http-origin/) — the SSL mode that goes with orange cloud on an HTTP origin
+- [snippets/cloudflare-proxy-off-for-ssh-host](../../snippets/cloudflare-proxy-off-for-ssh-host/) — the specific rationale for grey
+- [projects/cairn](../../projects/cairn/)

@@ -1,0 +1,128 @@
+---
+title: rsync atomic swap for static deploys
+description: "`rsync -a --delete dist/ /var/www/site/` looks atomic; it isn't. For true zero-window swaps, build in a sibling dir and rename."
+---
+
+> **Source:** [deploy-wiki](https://github.com/RogerSquare/rog-wiki) — the wiki's VPS deploy script
+> **Category:** Pattern — deployment
+
+**rsync atomic swap** — deploy a static site with zero "it's broken for 200ms while rsync is mid-copy". Build into a sibling directory, then `mv` the symlink atomically. Alternative: accept the tiny window `rsync --delete` has in exchange for simpler code.
+
+## What it is
+
+Two approaches, with their trade-offs:
+
+### The simple way — `rsync -a --delete`
+
+```bash
+rsync -a --delete dist/ /var/www/wiki/
+```
+
+- **What happens**: rsync walks the tree, copies new/changed files, deletes files missing in source.
+- **Window**: there *is* a moment when some old files are gone and some new ones aren't yet in place. For a static site, this is usually milliseconds and harmless. Requests during the window see either a mix of old+new or a 404.
+- **When this is fine**: small sites (tens of MB), personal use, low traffic. The wiki uses this approach.
+
+### The atomic way — symlink swap
+
+```bash
+RELEASE_DIR=/var/www/wiki-$(date +%s)
+rsync -a dist/ $RELEASE_DIR/
+ln -sfn $RELEASE_DIR /var/www/wiki-current
+nginx -s reload   # if nginx root is the symlink
+```
+
+- **What happens**: build into a fresh dir, swap the symlink, old dir stays around until cleanup.
+- **Window**: none. The symlink `rename()` is atomic on POSIX.
+- **Cost**: keep a few historical release dirs (disk), add a cleanup step, nginx config needs to follow symlinks.
+
+## Why it exists
+
+**The problem:** "Deploy by copying over live files" has a transition period. For a busy site, users mid-load during the rsync get a 404 or a broken page. Kind of like the microseconds-of-CSS-404 problem, but for entire asset bundles.
+
+**The fix:** either accept the short window (rsync --delete) or use symlink swap for zero-window.
+
+## When you need atomic
+
+- **High traffic** — probability of a user hitting the window becomes non-zero
+- **Asset manifests** — if `index.html` references `/_astro/abcd.js` and that chunk is deleted before the new one is in place, the page breaks
+- **Deploy happens often** — multiple deploys per minute compound the windows
+
+## When you don't need atomic
+
+- **Low traffic** — the window is a few ms, few enough users hit it that the cost doesn't justify the complexity
+- **Static content with consistent hashes** — if your asset paths have content hashes (Astro, Vite), old pages keep referring to old (still-present) files. Only the index page switches.
+
+## Implementation notes
+
+### The simple approach (used in deploy-wiki)
+
+```bash
+#!/bin/bash
+set -euo pipefail
+
+REPO_DIR=/opt/rog-wiki
+WEB_DIR=/var/www/wiki
+
+cd "$REPO_DIR"
+git pull --ff-only
+npm ci --no-audit --no-fund
+npm run build
+rsync -a --delete dist/ "$WEB_DIR/"
+chown -R www-data:www-data "$WEB_DIR"
+```
+
+### The atomic approach
+
+```bash
+#!/bin/bash
+set -euo pipefail
+
+REPO_DIR=/opt/rog-wiki
+RELEASES_DIR=/var/www/releases
+CURRENT_LINK=/var/www/wiki
+
+cd "$REPO_DIR"
+git pull --ff-only
+npm ci --no-audit --no-fund
+npm run build
+
+RELEASE=$(date +%Y%m%d-%H%M%S)-$(git rev-parse --short HEAD)
+NEW_DIR="$RELEASES_DIR/$RELEASE"
+
+mkdir -p "$NEW_DIR"
+rsync -a dist/ "$NEW_DIR/"
+chown -R www-data:www-data "$NEW_DIR"
+
+# Atomic swap
+ln -sfn "$NEW_DIR" "$CURRENT_LINK"
+
+# Cleanup: keep last 5 releases
+cd "$RELEASES_DIR"
+ls -1t | tail -n +6 | xargs -r rm -rf
+```
+
+nginx config must follow the symlink:
+```nginx
+root /var/www/wiki;   # follows symlink → /var/www/releases/<timestamp>
+```
+
+## How it's used
+
+- **rog-wiki** — currently uses the simple `rsync --delete` approach
+- **Pattern applies** to any static-site deploy where zero-window matters
+
+## Gotchas
+
+- **`--delete` is load-bearing.** Without it, deleted files linger forever. A renamed asset means the old one is still served until a fresh deploy.
+- **`-a` includes permissions.** Might not be what you want. `-rtlo` is a more conservative alternative (timestamps, symlinks, owner).
+- **Trailing slashes matter.** `rsync dist/ /var/www/wiki/` copies *contents*; `rsync dist /var/www/wiki/` copies the `dist` directory into `/var/www/wiki/dist`. Get this wrong and you'll wonder why the site is suddenly at `/dist`.
+- **Symlink swap needs `-n` flag on `ln`.** `ln -sf` tries to *follow* the existing symlink; `ln -sfn` replaces it. Forget `n` and your symlink swap creates a symlink inside the target directory instead of replacing it.
+- **`nginx -s reload` for symlink swap is usually unnecessary** — nginx re-opens files on each request by default. Only needed if you changed the config.
+- **Don't `rm -rf` the release dir while nginx is serving from it.** At worst, users mid-download get a truncated response. Move-then-delete or wait 60s after swap before cleanup.
+- **Disk space with atomic approach.** 5 releases × 20MB site = 100MB always present. Fine; just account for it.
+- **Rollback is trivial with atomic.** `ln -sfn /var/www/releases/<older-timestamp> /var/www/wiki` and you're back.
+
+## See also
+
+- [snippets/deploy-script-via-ssh](../../snippets/deploy-script-via-ssh/) — the wrapper that calls rsync
+- [patterns/vps-deploy-runbook-shape](../vps-deploy-runbook-shape/) — the doc around the deploy

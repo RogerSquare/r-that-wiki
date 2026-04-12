@@ -1,0 +1,100 @@
+---
+title: systemctl cat — verify an env override took effect
+description: After `systemctl edit` or writing a drop-in, `systemctl cat` shows the merged unit. The one command that tells you whether your override is actually loaded.
+---
+
+> **Source:** Cairn deploy — verifying `CAIRN_DATA_DIR` drop-in
+> **Category:** Snippet — systemd
+
+**`systemctl cat`** — prints the effective unit configuration, merging the base unit with every drop-in. Use it after any edit/override to confirm your change landed. Far more reliable than trusting the editor closed cleanly.
+
+## The command
+
+```bash
+sudo systemctl cat <unit-name>
+```
+
+Shows every file contributing to the unit, with comments pointing to the file path:
+
+```
+# /lib/systemd/system/portfolio-web.service
+[Unit]
+Description=Portfolio Web Server
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/node /opt/portfolio/ts/src/web-server.ts
+Restart=on-failure
+
+# /etc/systemd/system/portfolio-web.service.d/cairn-data-dir.conf
+[Service]
+Environment="CAIRN_DATA_DIR=/var/lib/cairn"
+
+# /etc/systemd/system/portfolio-web.service.d/port.conf
+[Service]
+Environment=WEB_PORT=3000
+```
+
+Two drop-ins visible; each in its own file. If either is missing, `cat` would skip it — immediate confirmation that "did my override take".
+
+## When to use it
+
+After every one of:
+- `systemctl edit <unit>`
+- `tee /etc/systemd/system/<unit>.d/override.conf`
+- Editing the base unit file directly
+- Package upgrade that might have regenerated a unit
+
+## Combined with grep for specific values
+
+```bash
+sudo systemctl cat portfolio-web.service | grep CAIRN_DATA_DIR
+```
+
+Empty output means the env var isn't set anywhere. Exactly what you need to confirm when troubleshooting "why isn't my service picking up this variable".
+
+## Related commands
+
+| Command | What it shows |
+|---|---|
+| `systemctl cat <unit>` | merged unit + all drop-ins (this snippet) |
+| `systemctl show <unit>` | computed state (every key the system has for this unit, expanded) |
+| `systemctl status <unit>` | current status, recent log lines |
+| `systemctl is-enabled <unit>` | enabled / disabled / masked / static |
+| `journalctl -u <unit> -f` | live log tail |
+
+`systemctl show` is verbose and often overwhelming; `systemctl cat` is the pragmatic daily check.
+
+## The common failure mode
+
+`systemctl edit <unit>` opens an editor for `override.conf`. If you save without adding content (just wrote nothing and closed), the override file is created but empty. **`systemctl cat` shows the empty drop-in** — that's how you notice.
+
+```
+# /etc/systemd/system/portfolio-web.service.d/override.conf
+(empty)
+```
+
+Fix: write the drop-in directly with `tee`, skipping the editor:
+
+```bash
+sudo tee /etc/systemd/system/portfolio-web.service.d/cairn-data-dir.conf <<'EOF'
+[Service]
+Environment="CAIRN_DATA_DIR=/var/lib/cairn"
+EOF
+sudo systemctl daemon-reload
+sudo systemctl cat portfolio-web.service | grep CAIRN_DATA_DIR
+```
+
+## Gotchas
+
+- **`daemon-reload` is required after changes.** `systemctl cat` shows the *file content* — if you forgot daemon-reload, the *running* service still uses the old config even though `cat` shows the new one. Always: edit → `daemon-reload` → `cat` (sanity) → `restart`.
+- **`cat` and `show` disagree on purpose.** `cat` is textual (unit files). `show` is runtime state (what systemd parsed and kept). Runtime can differ from files when daemon-reload is skipped.
+- **Permissions.** `sudo systemctl cat` usually works without sudo because unit files are world-readable. `systemctl edit` requires sudo because it writes to `/etc/systemd/`.
+- **User units.** For `--user` services, the path is `~/.config/systemd/user/` and you don't use sudo.
+- **No instance matching.** For template units like `foo@.service`, `systemctl cat foo@instance.service` works; `systemctl cat foo@` doesn't.
+- **Masked units.** If a unit is masked (`ln -s /dev/null ...`), `cat` returns essentially nothing. `is-enabled` surfaces "masked".
+
+## See also
+
+- [snippets/systemd-drop-in-env-var](../systemd-drop-in-env-var/) — the pattern this verifies
+- [patterns/vps-deploy-runbook-shape](../../patterns/vps-deploy-runbook-shape/) — where "verify" is a runbook step

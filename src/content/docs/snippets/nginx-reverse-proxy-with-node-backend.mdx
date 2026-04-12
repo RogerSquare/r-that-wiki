@@ -1,0 +1,98 @@
+---
+title: nginx reverse proxy to a Node backend
+description: The server block that puts nginx in front of an Express app. proxy_pass, headers, websocket upgrade, the full minimal config.
+---
+
+> **Source:** r-that.com — `/etc/nginx/sites-available/r-that.com`
+> **Category:** Snippet — nginx
+
+**nginx → Node proxy** — the single server block that terminates HTTP on port 80 (or 443) and forwards to a Node process on localhost. Handles the common gotchas: preserving the client IP, passing the original Host, upgrading websocket connections.
+
+## Config
+
+```nginx
+server {
+    listen 80;
+    listen [::]:80;
+    server_name r-that.com www.r-that.com;
+
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+
+        # Preserve original request info
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # Websocket upgrade support
+        proxy_set_header Upgrade    $http_upgrade;
+        proxy_set_header Connection "upgrade";
+
+        # Timeouts (generous, but don't hang forever)
+        proxy_connect_timeout 5s;
+        proxy_send_timeout    60s;
+        proxy_read_timeout    60s;
+    }
+}
+```
+
+## What each piece does
+
+- **`proxy_pass http://127.0.0.1:3000`** — forward to loopback on the port the Node app listens on
+- **`proxy_http_version 1.1`** — required for websockets and for `Connection: keep-alive` efficiency
+- **`Host $host`** — Node app sees the original hostname, not "127.0.0.1"
+- **`X-Real-IP`, `X-Forwarded-For`** — Node needs these to know the actual client IP (its `req.ip` would otherwise be nginx's 127.0.0.1)
+- **`X-Forwarded-Proto`** — tells Node whether the original request was HTTPS (important for cookie `Secure` flags, redirect URLs)
+- **`Upgrade`, `Connection upgrade`** — conditional: set by socket.io clients on websocket connections; nginx forwards them so the upgrade handshake completes
+
+## In the Node app
+
+Enable `trust proxy` so Express reads those forwarded headers:
+
+```js
+app.set('trust proxy', 1);   // 1 means "trust one hop" (nginx only)
+// Now req.ip reflects the real client; req.protocol reflects the original scheme
+```
+
+## Multi-site variant
+
+For multiple hostnames on the same box, repeat the `server {}` block with a different `server_name` and `proxy_pass`:
+
+```nginx
+server {
+    listen 80;
+    server_name app.example.com;
+    location / { proxy_pass http://127.0.0.1:3000; ... }
+}
+
+server {
+    listen 80;
+    server_name admin.example.com;
+    location / { proxy_pass http://127.0.0.1:4000; ... }
+}
+
+server {
+    listen 80;
+    server_name static.example.com;
+    root /var/www/static;
+}
+```
+
+## Gotchas
+
+- **`$host` vs `$http_host`.** `$host` comes from the request line (reliable); `$http_host` is the raw header (can be missing). Use `$host`.
+- **`X-Forwarded-For` accumulates.** If another proxy is in front of nginx, `$proxy_add_x_forwarded_for` appends rather than overwriting. This is correct — you get the full chain.
+- **`proxy_set_header` inside `location`** overrides the global set. Each `location` that needs forwarded headers must set them (or define them at the `server` level).
+- **Timeout defaults are long.** nginx's default `proxy_read_timeout` is 60s; fine for web requests, might be too short for long-running uploads or SSE. Bump per-endpoint if needed.
+- **Buffering.** nginx buffers the response by default. For SSE or streaming responses, disable: `proxy_buffering off; proxy_cache off;`.
+- **Forwarded IP spoofing.** If anyone can reach nginx besides your intended clients, they can inject `X-Forwarded-For` with a fake IP. Behind Cloudflare, use `CF-Connecting-IP` instead.
+- **Websocket upgrade + `Connection: upgrade`** is the single most common "websocket not working" bug. Both headers required on the proxied path.
+- **`trust proxy` in Express** is picky about how many hops to trust. `1` for nginx-only. If nginx is behind Cloudflare too, `2`.
+- **HTTPS at the proxy.** If nginx terminates TLS (listen 443 ssl), set `X-Forwarded-Proto https` explicitly because `$scheme` reads the nginx-facing scheme, not what the client sent. Actually `$scheme` is fine — "$scheme" evaluates to "https" when nginx terminates TLS.
+
+## See also
+
+- [snippets/nginx-subdomain-static-site](../nginx-subdomain-static-site/) — sibling pattern for static files
+- [patterns/cloudflare-flexible-tls-for-http-origin](../../patterns/cloudflare-flexible-tls-for-http-origin/) — what sits in front of nginx for the proxied hostnames
