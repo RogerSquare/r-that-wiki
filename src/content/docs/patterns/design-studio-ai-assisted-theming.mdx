@@ -1,0 +1,89 @@
+---
+title: Design Studio — AI-assisted theming
+description: Let an LLM propose CSS variable changes from natural-language requests, preview instantly, commit when the user approves.
+---
+
+> **Source:** [atrium/backend/routes/design.js](https://github.com/RogerSquare/atrium/blob/main/backend/routes/design.js) · [components/design-studio](../../components/design-studio/)
+> **Category:** Pattern — AI-assisted UI
+
+**Design Studio** — a theme editor that pipes user intent through a local LLM. User says "warmer, more professional", LLM proposes CSS variable changes (and optionally minor layout edits), UI previews them live, user accepts or refines.
+
+## What it is
+
+An admin-only route that takes a message, reads the app's current CSS custom properties and optionally some component source files, asks Claude for a concrete set of changes, and returns them as structured JSON. The frontend applies the changes to a preview and lets the user commit them to the theme.
+
+## Why it exists
+
+**The problem:** Theming is a chore. To change "the accent color is too loud", a user has to:
+1. Open devtools
+2. Find the accent variable
+3. Pick a new color
+4. Test it across pages
+5. Commit the change
+
+Designers do this fluently; developers do it grudgingly; non-technical users don't do it at all.
+
+**The fix:** delegate the mechanical part to the LLM. The user describes the feel; the LLM proposes exact tokens. The user stays in the feedback loop by seeing every change applied live and can veto or adjust.
+
+## Flow
+
+1. User opens the Design Studio, types: "More minimalist, reduce the borders"
+2. Frontend posts the message + current CSS custom properties + optionally some component JSX to `POST /api/design/chat`
+3. Backend builds a prompt: `"You are a design partner. Current CSS variables: {...}. User request: 'More minimalist...'. Respond with JSON listing CSS variable changes and optional component modifications."`
+4. Claude responds with a structured proposal
+5. Frontend renders a diff, applies the CSS changes to a preview iframe
+6. User clicks Accept → POST writes the new values to `theme.json` (or similar)
+
+## Prompt shape
+
+```js
+const lines = [];
+lines.push('You are a creative AI design partner inside Atrium.');
+lines.push('You help users redesign look, feel, AND layout.');
+lines.push('You can modify CSS custom properties for theming AND propose changes to component files.');
+lines.push('');
+lines.push('## Current CSS variables');
+lines.push(JSON.stringify(cssVariables, null, 2));
+lines.push('');
+lines.push('## User request');
+lines.push(message);
+lines.push('');
+lines.push('## Respond with JSON:');
+lines.push('```json');
+lines.push('{ "css_changes": { "--accent": "#...", ... }, "component_changes": [...] }');
+lines.push('```');
+```
+
+## Response schema
+
+```ts
+interface DesignProposal {
+  summary: string;                         // plain-English explanation
+  css_changes: Record<string, string>;     // variable name → new value
+  component_changes?: {                    // optional, if layout changes requested
+    file: string;
+    diff: string;                          // unified diff format
+  }[];
+}
+```
+
+## How it's used
+
+- **Atrium** — admin panel has a Design Studio tab; most theming happens there now
+- **Pattern generalizes** to any app with CSS custom properties and an admin surface
+
+## Gotchas
+
+- **Lock the LLM to structured output.** Free-text responses from an LLM about design require parsing; the JSON-only contract keeps the backend side of the integration deterministic.
+- **Component modifications are risky.** Live CSS previews are reversible; file edits are not. If you let the LLM change JSX, require an explicit human approval step, diff-preview, and commit as a separate git commit.
+- **Apply via a preview, not the live DOM.** Mutating real styles while the user is looking at them flickers and can break positional bugs. Render the preview in an iframe or a separate frame.
+- **Color contrast is a real problem.** LLMs will happily propose color combinations that fail WCAG AA. Validate automatically before showing — and surface the failure so the user can adjust.
+- **Theme persistence.** Decide the write target: `theme.json`, CSS override file, database row. All work; pick one and stay consistent.
+- **Undo.** Every accept should create a version history entry so "the last change was too dark" has a one-click fix.
+- **Avoid whole-app reloads.** CSS custom properties updated on `document.documentElement` re-paint without reload. File-level component changes do require reload; warn before applying.
+- **Token budget.** Sending all component source to the LLM costs a lot; send only the file(s) the user is editing, or summaries.
+
+## See also
+
+- [patterns/ai-chat-dispatch-to-claude-cli](../ai-chat-dispatch-to-claude-cli/) — how Atrium shells to Claude for this kind of thing
+- [components/design-studio](../../components/design-studio/) — the UI this sits behind

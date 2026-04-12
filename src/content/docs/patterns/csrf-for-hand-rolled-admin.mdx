@@ -1,0 +1,94 @@
+---
+title: CSRF for a hand-rolled admin
+description: One cookie + one hidden field + one middleware. Full CSRF protection without pulling in a framework.
+---
+
+> **Source:** [cairn/ts/src/web-server.ts](https://github.com/RogerSquare/cairn/blob/main/ts/src/web-server.ts) (admin routes) · [atrium](../../projects/atrium/)
+> **Category:** Pattern — security
+
+**CSRF for hand-rolled admin** — a minimal double-submit cookie pattern. Server sets a signed random token in a cookie on any admin GET. Forms include the same token as a hidden field. On POST, the middleware checks cookie and field match. Three lines of config per route.
+
+## What it is
+
+No library. One middleware function that issues a cookie on first admin request and verifies token equality on every subsequent POST. Forms render the token with a `csrfField()` helper. That's the whole story.
+
+## Why it exists
+
+**The problem:** If you have an admin area (`/admin/new`, `/admin/delete/:id`, etc.) and your app uses cookie-based auth, you're one cross-site `<img src="/admin/delete/1">` away from a compromised session. The fix is CSRF tokens.
+
+Options for getting them:
+
+1. **`csurf` / `csrf-csrf` libraries** — fine, but yet another dependency with its own opinions
+2. **Session-based CSRF** — requires session storage (Redis/DB), overkill for a tiny admin
+3. **Double-submit cookie** — stateless, tiny, good enough
+
+**The fix:** double-submit cookie. Server-signed random token lives in both a cookie and a form field. If they match (and the cookie is `SameSite=Strict`), the request originated from your own origin.
+
+## Shape
+
+```js
+const crypto = require('crypto');
+const CSRF_SECRET = process.env.CSRF_SECRET || crypto.randomBytes(32).toString('hex');
+
+function issueToken() {
+  const random = crypto.randomBytes(16).toString('hex');
+  const sig = crypto.createHmac('sha256', CSRF_SECRET).update(random).digest('hex').slice(0, 16);
+  return `${random}.${sig}`;
+}
+
+function verifyToken(token) {
+  if (!token || !token.includes('.')) return false;
+  const [random, sig] = token.split('.');
+  const expected = crypto.createHmac('sha256', CSRF_SECRET).update(random).digest('hex').slice(0, 16);
+  return crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected));
+}
+
+function csrfMiddleware(req, res, next) {
+  if (!req.cookies.csrf) {
+    const token = issueToken();
+    res.cookie('csrf', token, { httpOnly: true, sameSite: 'strict', secure: true });
+    req.cookies.csrf = token;
+  }
+  if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(req.method)) {
+    if (!verifyToken(req.body?._csrf) || req.body._csrf !== req.cookies.csrf) {
+      return res.status(403).send('CSRF validation failed');
+    }
+  }
+  next();
+}
+
+// Helper for the form:
+const csrfField = (req) => `<input type="hidden" name="_csrf" value="${req.cookies.csrf}">`;
+```
+
+Wire it only on admin routes:
+
+```js
+app.use('/admin', csrfMiddleware);
+
+app.post('/admin/projects/new', requireAdmin, (req, res) => {
+  // body is already validated against CSRF by the middleware
+});
+```
+
+## How it's used
+
+- **Cairn** — every `/admin/*` form includes `${csrfField(req)}` in the HTML and the middleware verifies on POST
+- **Atrium** — similar pattern on admin-only routes
+- **Pattern generalizes** to any cookie-auth admin surface where sessions are the auth
+
+## Gotchas
+
+- **`SameSite=Strict` on the cookie is half the defense.** Without it, the cookie rides along on cross-site requests and the token-matches-cookie check passes trivially. Strict means the cookie doesn't go out on top-level cross-site GETs either — good, unless you break your own "magic link" login flow.
+- **`httpOnly: true`** prevents JavaScript (including XSS payloads) from reading the token. Required; otherwise an XSS bug defeats CSRF.
+- **`secure: true`** means the cookie only goes over HTTPS. Right in prod; breaks dev on `http://localhost`. Gate on `process.env.NODE_ENV === 'production'`.
+- **`timingSafeEqual` is mandatory.** Plain `===` comparison leaks info about where the mismatch occurs via timing. Use Node's constant-time comparison.
+- **The token has to be different from the session id.** Same value in both cookies means compromising one compromises the other. Use separate random for CSRF.
+- **API-only endpoints don't need CSRF** if they require `Authorization: Bearer <token>` (since browsers don't attach that to cross-site requests automatically). CSRF is about *cookie* auth. A mixed app needs both protections on different routes.
+- **Don't log the token.** If you log request bodies anywhere, filter `_csrf` out.
+- **Rotation on login.** When the user logs in, issue a fresh CSRF token to prevent fixation attacks.
+
+## See also
+
+- [patterns/hand-rolled-express-admin-cms](../hand-rolled-express-admin-cms/) — where Cairn's admin routes live
+- [patterns/jwt-secret-persist-or-generate](../jwt-secret-persist-or-generate/) — similar "persist-or-generate" pattern for the CSRF secret itself

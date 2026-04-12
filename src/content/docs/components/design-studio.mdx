@@ -1,0 +1,43 @@
+---
+title: Design Studio
+description: Natural-language theme editor with live preview and AI-proposed CSS variable changes.
+---
+
+import DesignStudio from '../../../examples/design-studio.tsx';
+
+> **Source:** [atrium/frontend/src/components/DesignStudio.jsx](https://github.com/RogerSquare/atrium/blob/main/frontend/src/components/DesignStudio.jsx)
+> **Category:** Composite component
+
+**Design Studio** — admin-only panel for theming the app by typing what you want. User describes the change, AI proposes CSS variable updates, a live preview shows the result, user accepts or rejects.
+
+## What it is
+
+A split panel: chat input on the left, live preview on the right. The chat posts to the backend's `design/chat` route (see [the AI-assisted theming pattern](../../patterns/design-studio-ai-assisted-theming/)). The response includes CSS variable changes which the frontend applies to the preview via `document.documentElement.style.setProperty('--accent', newValue)`. On accept, the changes are written to the persistent theme.
+
+## Why it exists
+
+Users know what they want to feel. They don't know color theory or CSS token naming. Design Studio bridges the two — they speak intent, the AI speaks CSS.
+
+## Live
+
+The demo below is frontend-only — "Propose changes" is mocked to a fixed proposal. In the real Atrium, Claude generates proposals based on the current variable state and the user's request.
+
+<DesignStudio client:load />
+
+## How it's used
+
+- **Atrium** — admin panel → Design Studio tab
+- **Pattern generalizes** — any app with CSS custom properties and an admin
+
+## Gotchas
+
+- **Scoped preview.** Don't apply the proposed CSS to `document.documentElement` directly — the entire admin UI would restyle mid-preview. Scope to a container with its own custom properties.
+- **Accept ≠ ship.** "Apply" saves to the persistent theme, which reloads the page for all users. Add an explicit "publish" step if multi-user.
+- **Undo is non-optional.** The history of theme changes should be stored and reversible; one bad prompt shouldn't trash the look.
+- **Token budget.** Don't send the entire CSS variable dump on every message; send only what's likely relevant (e.g. color variables when the prompt mentions color).
+- **Color-blind preview.** The AI will propose combos that look great to it. Automatically check WCAG contrast and surface failures.
+
+## See also
+
+- [patterns/design-studio-ai-assisted-theming](../../patterns/design-studio-ai-assisted-theming/) — the pattern this sits on top of
+- [patterns/ai-chat-dispatch-to-claude-cli](../../patterns/ai-chat-dispatch-to-claude-cli/) — how Atrium invokes Claude

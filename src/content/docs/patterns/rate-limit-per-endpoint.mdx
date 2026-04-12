@@ -1,0 +1,87 @@
+---
+title: Rate limiting per endpoint
+description: Different limits for different routes. Tighten public endpoints, loosen internal ones.
+---
+
+> **Source:** [atrium](../../projects/atrium/) · [markstack](../../projects/markstack/) · [cairn](../../projects/cairn/) (admin auth)
+> **Category:** Pattern — security
+
+**Rate limiting per endpoint** — don't apply one limit to the whole app. Different routes have different threat profiles; tune the limiter per route. Login and comment endpoints get aggressive limits; authenticated GETs get generous ones.
+
+## What it is
+
+One `express-rate-limit` instance per route (or route group), each with its own window and max. Keys are IP by default; bump to IP+user for authenticated routes if you want per-user fairness.
+
+## Why it exists
+
+**The problem:** A single global rate limit is either too strict (cripples a user browsing many pages) or too loose (doesn't stop brute-force on the login endpoint). Real apps have mixed endpoint profiles:
+
+- `POST /auth/login` — seconds-scale abuse, small max (5/min)
+- `POST /auth/register` — prevent account spam, small max (3/hour)
+- `POST /comments` — prevent spam, medium max (20/hour)
+- `GET /api/tasks` — user browsing, generous (300/min)
+- `GET /api/docs` — public, but cacheable, loose (600/min)
+
+**The fix:** define the limits as constants, apply them as middleware on the specific routes they protect.
+
+## Shape
+
+```js
+const rateLimit = require('express-rate-limit');
+
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,  // 15 min
+  max: 5,
+  message: 'Too many login attempts. Try again in 15 minutes.',
+  standardHeaders: true,     // RFC RateLimit-* headers
+  legacyHeaders: false,
+});
+
+const writeLimiter = rateLimit({
+  windowMs: 60 * 1000,       // 1 min
+  max: 30,
+});
+
+const readLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 300,
+});
+
+// Apply per-route:
+app.post('/auth/login',     loginLimiter, loginHandler);
+app.post('/api/tasks',      writeLimiter, requireAuth, createTask);
+app.get('/api/tasks',       readLimiter,  requireAuth, listTasks);
+```
+
+Key by user when authenticated:
+
+```js
+const perUserLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  keyGenerator: (req) => req.user?.id ?? req.ip,
+});
+```
+
+## How it's used
+
+- **Atrium** — AI chat endpoint has its own strict limiter (LLM calls are expensive)
+- **markstack** — public endpoints rate-limited; authenticated endpoints bypass or have a higher per-user limit
+- **Cairn** — admin login has a small window; the rest of `/admin/*` is behind auth and largely unrestricted
+- **Pattern generalizes** to any HTTP service with heterogeneous endpoint profiles
+
+## Gotchas
+
+- **`trust proxy` must be set correctly.** Behind nginx or Cloudflare, `req.ip` is the proxy's IP unless you set `app.set('trust proxy', 1)` (or a specific count of hops). Forget this and every request appears to come from 127.0.0.1 and one user can exhaust the global quota.
+- **Don't rate-limit static files.** Serving assets is cheap and users pull many per page. Skip or use a very loose limiter.
+- **Distribute across workers carefully.** `express-rate-limit`'s default store is in-memory — if you run multiple workers, each has its own counter, effectively multiplying your limit. Use Redis or SQLite adapter for multi-worker setups.
+- **Retry-After headers help polite clients.** `standardHeaders: true` emits `RateLimit-*` and `Retry-After`; good clients respect them and you get fewer retries.
+- **Keep the user-facing message short.** The response body is what the user sees; don't include timing details they can use to tune attacks.
+- **Burst vs steady state.** One limiter can't express both "no more than 5 in 10 seconds" and "no more than 100 in an hour". For that, stack two limiters — the shorter one first in the middleware chain.
+- **Keep admin endpoints behind auth, not behind rate limits.** Auth is the primary defense; rate limits are belt-and-suspenders. A too-strict admin limiter locks you out at the worst moment.
+- **Login endpoint deserves special treatment.** Key by IP *and* by username; a small window; consider account lockout on N failures. Brute-force is the main threat.
+
+## See also
+
+- [patterns/jwt-refresh-rotation](../jwt-refresh-rotation/) — the auth flow that login-endpoint rate limits protect
+- [patterns/ai-chat-dispatch-to-claude-cli](../ai-chat-dispatch-to-claude-cli/) — why the AI chat endpoint needs its own strict limiter

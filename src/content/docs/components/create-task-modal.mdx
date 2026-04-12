@@ -1,0 +1,65 @@
+---
+title: Create task modal
+description: New-task form with auto-suggested id from title, project picker, priority, tags.
+---
+
+import CreateTaskModal from '../../../examples/create-task-modal.tsx';
+
+> **Source:** [atrium/frontend/src/components/CreateTaskModal.jsx](https://github.com/RogerSquare/atrium/blob/main/frontend/src/components/CreateTaskModal.jsx)
+> **Category:** Form
+
+**Create task modal** — the "+" button's destination. Collects a title, category (the id prefix), project, priority, and tags. Auto-suggests a task id from the title, which the user can override.
+
+## What it is
+
+A compact form modal. Six fields, one live-computed preview ("Suggested id"). On submit, POSTs to `/api/tasks`. The id convention (`{category}-{slug}-{number}`) is visible and editable, so advanced users know what they're getting.
+
+## Why it exists
+
+Task creation is the single most-used write path on the board. Making it fast matters:
+- One modal, all required fields visible
+- Smart defaults (previous project pre-selected, priority=medium, category=feat)
+- id auto-suggested so the user doesn't need to think about it
+- Enter-to-submit
+
+## Live
+
+<div style={{ padding: 24, background: '#020617', borderRadius: 8, display: 'flex', justifyContent: 'center' }}>
+  <CreateTaskModal client:load />
+</div>
+
+## Id suggestion logic
+
+```js
+function suggestId(category, title) {
+  const slug = title.toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, '')
+    .split(/\s+/).filter(Boolean)
+    .slice(0, 2)                    // first two words
+    .join('-').slice(0, 16);
+  return `${category}-${slug}-001`;
+}
+```
+
+The trailing `001` increments based on how many tasks already use `${category}-${slug}-`. The backend can re-compute and overwrite if the UI suggestion collides.
+
+## How it's used
+
+- **Atrium** — keyboard shortcut (`C`) opens this modal; "+ New task" button opens it too
+- **Pattern generalizes** to any kanban/task tool with a strict id convention
+
+## Gotchas
+
+- **Id collisions.** Two users (or one user in two tabs) typing similar titles can generate the same suggested id. The backend should atomically assign the final number (`001`, `002`, …) based on a server-side count, not trust the client.
+- **Project dropdown object shape.** Projects are `{id, name, folder}` objects now ([short-ids pattern](../../patterns/stable-project-ids/)). Render `name (id)` so advanced users see both; submit the `folder` value (what the backend uses).
+- **Tag chips vs comma-separated string.** Comma string is simpler; chips are prettier. Start with string; upgrade if you find yourself typing commas too often.
+- **Default category matters.** Atrium defaults to `feat-` because most tasks are feature work. Bugs and ops tend to be deliberate about using the right prefix.
+- **Pre-populating from URL.** Deep-linking ("create bug from this error page") becomes useful once you have it; design for URL params early.
+- **Enter-to-submit** in textarea fields is a UX decision. For a title field, yes. For a multi-line description, Ctrl+Enter submits, Enter inserts newline.
+- **Validation is minimal.** Title required; everything else has a default. Don't over-validate at creation — comments and subsequent edits will fix details.
+
+## See also
+
+- [components/task-card](../task-card/) · [components/task-modal](../task-modal/) — what gets created
+- [patterns/stable-project-ids](../../patterns/stable-project-ids/) — why the project dropdown uses objects
+- [snippets/task-id-generation](../../snippets/task-id-generation/) — the id convention in detail

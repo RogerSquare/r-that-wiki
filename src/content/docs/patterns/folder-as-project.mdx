@@ -1,0 +1,81 @@
+---
+title: Folder-as-project — no `project:` field in records
+description: The parent directory *is* the project. No redundancy between record content and record location, no way for them to drift.
+---
+
+> **Source:** [atrium/backend/tasks/](https://github.com/RogerSquare/atrium/tree/main/backend/tasks) — tasks have no `project:` in their YAML
+> **Category:** Pattern — data modeling
+
+**Folder-as-project** — when records are files on disk and you want to categorize them, use the parent directory. Don't store the category in the record's frontmatter too. Two sources of truth always drift.
+
+## What it is
+
+A task file at `backend/tasks/Atrium/feat-shortids-001.md` belongs to the `Atrium` project. Not because the frontmatter says so — it doesn't — but because the file is in that directory. The backend reads the path when building the task model.
+
+## Why it exists
+
+**The problem:** Storing the project inside the record's frontmatter seems obvious:
+
+```yaml
+# task file
+---
+id: feat-shortids-001
+project: Atrium
+---
+```
+
+Then the file lives at `tasks/Atrium/feat-shortids-001.md`. Two places say "this is in Atrium". Natural, until:
+
+1. A user renames the project (Portfolio → Cairn). Now every task's frontmatter has to be rewritten.
+2. A user moves a task via `mv`. The frontmatter is wrong.
+3. A script skips one of the two places on migration. Silent drift.
+4. The backend reads one source, the UI displays the other, they disagree, and debugging takes hours.
+
+**The fix:** pick one source of truth — the directory — and let it be canonical. Record has no `project:` field; the backend derives it from the file path.
+
+## Shape
+
+```js
+// Reading: parent folder becomes `project`
+const files = walkTasksDir(TASKS_DIR);
+const tasks = files.map(fullPath => {
+  const rel = path.relative(TASKS_DIR, fullPath);
+  const folder = path.dirname(rel);                         // 'Atrium' or 'Root'
+  const parsed = matter(fs.readFileSync(fullPath, 'utf8'));
+  return {
+    ...parsed.data,
+    content: parsed.content,
+    project: folder === '.' ? 'Root' : folder,              // derived
+    filePath: fullPath,
+  };
+});
+
+// Writing: moving between projects is a file move, not a field edit
+async function setProject(taskId, newProject) {
+  const task = findById(taskId);
+  const dest = path.join(TASKS_DIR, newProject, `${taskId}.md`);
+  await fs.rename(task.filePath, dest);                     // atomic
+  appendActivityLog(dest, `Moved from ${task.project} to ${newProject}`);
+}
+```
+
+## How it's used
+
+- **Atrium** — task files never have a `project:` in frontmatter; folder is truth
+- **Pattern generalizes** to any filesystem-backed data where records have a single categorical attribute
+
+## Gotchas
+
+- **Moving a project = moving a folder.** Renaming "Portfolio" to "Cairn" is `mv backend/tasks/Portfolio backend/tasks/Cairn`. One `mv`, done. No per-task edits, no migration script.
+- **Backend must skip hidden directories.** `.trash/`, `.history/`, or any `.` prefix should be excluded from the project walk. Otherwise trashed tasks reappear as live tasks in a project called ".trash".
+- **"Root" is a special name.** Tasks at the top level (not in any subdirectory) belong to a conceptual "unassigned" bucket. Codify the mapping once (`folder === '' ? 'Root' : folder`) and use it everywhere.
+- **Case sensitivity depends on the filesystem.** `Atrium/` on Linux is different from `atrium/`; on macOS (default) and Windows they collide. Pick one casing and enforce it via validation on project create.
+- **Files can't be in two projects.** If a task belongs to "Atrium" and "Artifex" simultaneously, this model doesn't support it — tags or cross-project references are the escape hatch.
+- **File watchers need to understand nested dirs.** A file watcher set to depth 1 won't pick up `tasks/SomeProject/new-task.md`. Use recursive watchers (Node's `fs.watch` with `{recursive: true}` works on most platforms).
+- **Backups preserve paths.** Restoring an `.md` file to the wrong directory moves it to the wrong project silently. Tooling that backs up the tasks tree must preserve relative paths.
+
+## See also
+
+- [patterns/markdown-as-database](../markdown-as-database/) — the substrate
+- [patterns/stable-project-ids](../stable-project-ids/) — the registry that maps display names to folder names
+- [patterns/trash-directory-soft-delete](../trash-directory-soft-delete/) — why `.trash/` needs special handling

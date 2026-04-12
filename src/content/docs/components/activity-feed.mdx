@@ -1,0 +1,76 @@
+---
+title: Activity feed
+description: Timeline of recent actions across all projects, grouped by time bucket.
+---
+
+import ActivityFeed from '../../../examples/activity-feed.tsx';
+
+> **Source:** [atrium/frontend/src/components/ActivityFeed.jsx](https://github.com/RogerSquare/atrium/blob/main/frontend/src/components/ActivityFeed.jsx)
+> **Category:** View
+
+**Activity feed** — cross-project reverse-chronological list of recent state changes. Grouped by coarse time buckets (Today / Yesterday / Earlier). Each row shows the task id, the action, who did it, and how long ago.
+
+## What it is
+
+An aggregation view that reads the `activity_log` arrays of every task (see [activity-log-in-yaml-frontmatter](../../patterns/activity-log-in-yaml-frontmatter/)) and flattens them into one chronological stream, then groups by time. Read-only; clicking a row opens the task modal.
+
+## Why it exists
+
+"What's happened lately?" is a recurring question — when you come back from vacation, when you want to spot-check agent activity, when you're writing a standup note. Without an activity feed, the answer is "open every task and read its history", which nobody does.
+
+## Live
+
+<div style={{ padding: 20, background: '#020617', borderRadius: 8, display: 'flex', justifyContent: 'center' }}>
+  <ActivityFeed client:load />
+</div>
+
+## Data flow
+
+```js
+// Backend: GET /api/activity?limit=50
+const tasks = getAllTasks(TASKS_DIR);
+const entries = tasks.flatMap(t =>
+  (t.activity_log ?? []).map(e => ({
+    taskId: t.id,
+    taskTitle: t.title,
+    action: e.action,                // "Status changed to REVIEW by opus-agent"
+    ts: new Date(e.timestamp),
+  }))
+);
+entries.sort((a, b) => b.ts - a.ts);
+return entries.slice(0, limit);
+```
+
+```jsx
+// Frontend
+function bucketize(entries) {
+  const now = Date.now(), today = [], yesterday = [], earlier = [];
+  for (const e of entries) {
+    const age = now - e.ts;
+    if (age < 24 * 3600 * 1000) today.push(e);
+    else if (age < 48 * 3600 * 1000) yesterday.push(e);
+    else earlier.push(e);
+  }
+  return { today, yesterday, earlier };
+}
+```
+
+## How it's used
+
+- **Atrium** — dashboard panel + a full-page view accessible from the top nav
+- **Pattern generalizes** to any app with per-record change logs where cross-record visibility matters
+
+## Gotchas
+
+- **Computed on every request.** Flattening activity logs from hundreds of tasks is cheap (it's all in-memory), but cache if it gets slow. Invalidate the cache on any task write via the socket broadcast.
+- **Group boundaries are timezone-sensitive.** "Today" means "since midnight in the user's timezone" — use the client's `new Date()` for bucketing. Server-side bucketing ignores the user's timezone and feels wrong.
+- **Free-text `action` strings mean weak filtering.** You can't easily answer "show me status changes only" without parsing. If you want that, either structure the log entries (breaks hand-editing) or accept the limitation.
+- **Noisy authors.** A chatty agent can dominate the feed. Offer a "hide \<author\>" filter for when you want to see human-only activity.
+- **Stale in a multi-user setup.** The feed is a snapshot unless you subscribe to socket events. Refetch on `task_changed` or similar.
+- **Deep-linking rows.** Clicking a row should deep-link to the task modal with the activity tab active so the user can see the full history of that task.
+- **Pagination.** Top 50 entries is a reasonable default. "Load more" for earlier; don't render thousands in the DOM.
+
+## See also
+
+- [patterns/activity-log-in-yaml-frontmatter](../../patterns/activity-log-in-yaml-frontmatter/) — the raw data substrate
+- [components/task-modal](../task-modal/) — where "click a row" goes

@@ -1,0 +1,87 @@
+---
+title: Terminal tab (xterm + socket.io PTY)
+description: Embed a real shell in the task modal. Agent work happens in-context, output streams live.
+---
+
+import TerminalTab from '../../../examples/terminal-tab.tsx';
+
+> **Source:** [atrium/frontend/src/components/TerminalTab.jsx](https://github.com/RogerSquare/atrium/blob/main/frontend/src/components/TerminalTab.jsx)
+> **Category:** Composite component
+
+**Terminal tab** — embedded pseudo-terminal using xterm.js + node-pty on the backend, wired through socket.io. One tab inside the task modal opens a shell scoped to the working directory configured in Atrium; from there the user can launch an agent session (e.g. `opencode "review task ..."`) and watch the output stream in real time.
+
+## What it is
+
+Frontend: xterm.js renders a fully-featured terminal emulator into a `<div>`. Each keystroke is sent to the server; each chunk of output is written to the terminal. Backend: `node-pty` spawns a real shell process, the socket pipes data between the frontend and the pty.
+
+## Why it exists
+
+Clicking a task → "open terminal in this project's directory" shortens the distance from browsing to doing. Agent output visible alongside the task description closes the feedback loop.
+
+## Live
+
+The render below is a static mock of what the tab looks like mid-agent-session — in the real app it's a live xterm instance.
+
+<TerminalTab client:load />
+
+## Backend sketch
+
+```js
+const pty = require('node-pty');
+const os = require('os');
+
+io.on('connection', socket => {
+  socket.on('start_terminal', ({ cwd, cols, rows }) => {
+    const shell = os.platform() === 'win32' ? 'powershell.exe' : 'bash';
+    const term = pty.spawn(shell, [], { name: 'xterm-color', cols, rows, cwd });
+
+    term.onData(data => socket.emit('terminal_data', data));
+    socket.on('terminal_input', input => term.write(input));
+    socket.on('terminal_resize', ({ cols, rows }) => term.resize(cols, rows));
+    socket.on('disconnect', () => term.kill());
+  });
+});
+```
+
+Frontend sketch:
+
+```jsx
+import { Terminal } from '@xterm/xterm';
+import { FitAddon } from '@xterm/addon-fit';
+
+useEffect(() => {
+  const term = new Terminal();
+  const fit = new FitAddon();
+  term.loadAddon(fit);
+  term.open(containerRef.current);
+  fit.fit();
+
+  socket.emit('start_terminal', { cwd: task.workingDirectory, cols: term.cols, rows: term.rows });
+
+  const handleData = (d) => term.write(d);
+  socket.on('terminal_data', handleData);
+  term.onData(input => socket.emit('terminal_input', input));
+
+  return () => { term.dispose(); socket.off('terminal_data', handleData); };
+}, [task.workingDirectory]);
+```
+
+## How it's used
+
+- **Atrium** — tab inside TaskModal; each open terminal runs in the project's working directory as configured in settings
+- **Pattern generalizes** to any dev tool that wants inline shell access (CI-log tailing, deploy tooling, admin consoles)
+
+## Gotchas
+
+- **PTY is heavy.** Each open terminal is a real shell process on the server. Cap the number of concurrent terminals per user and kill on disconnect.
+- **`node-pty` has platform differences.** Windows spawns `conpty` or `winpty`; Unix spawns a real PTY. Command syntax, line endings, color capability all vary. Test both.
+- **Resize events matter.** Without `terminal_resize`, shell output wraps based on the original dimensions and looks broken when the user changes window size.
+- **Security: a terminal *is* code execution.** Require auth, restrict `cwd` to approved paths, never expose over an unauthenticated endpoint.
+- **Output volume can flood the socket.** `yes | head -c 10MB` emits enough data to freeze the browser. Throttle or drop frames if the buffer grows beyond a threshold.
+- **Credential leakage.** If the shell environment contains secrets (API keys, tokens), any user with terminal access sees them. Scrub env or use a dedicated service account for the spawned shell.
+- **Scrollback isn't free.** xterm's default scrollback is 1000 lines. For long agent sessions, bump to ~10000 — but that costs memory.
+
+## See also
+
+- [components/task-modal](../task-modal/) — the parent that hosts this tab
+- [patterns/service-registry-control-plane](../../patterns/service-registry-control-plane/) — same "supervise local processes" neighborhood

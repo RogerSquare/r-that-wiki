@@ -1,0 +1,80 @@
+---
+title: Concurrent session guard
+description: One-in-memory-flag pattern for routes that shouldn't run two at a time.
+---
+
+> **Source:** [atrium/backend/routes/ai.js](https://github.com/RogerSquare/atrium/blob/main/backend/routes/ai.js) — `/api/ai/chat`
+> **Category:** Snippet — concurrency
+
+**Concurrent session guard** — a three-line in-memory flag that blocks a route from running twice simultaneously. For single-server setups with single-use operations (LLM spawns, heavy builds, destructive actions), this is usually enough; no DB lock, no distributed consensus.
+
+## What it is
+
+A module-scoped variable. When the route starts, check the variable. If set, reject with 409. If not, set it, run the work, clear it when done (including on error). Automatic release after a timeout so a crash doesn't strand the flag forever.
+
+## Code
+
+```js
+let activeSession = null;           // { startedAt, id? }
+const SESSION_TIMEOUT_MS = 2 * 60 * 1000;
+
+function releaseSession(reason) {
+  if (activeSession) {
+    console.log(`[guard] releasing session (${reason})`);
+    activeSession = null;
+  }
+}
+
+router.post('/chat', async (req, res) => {
+  if (activeSession) {
+    const age = Date.now() - activeSession.startedAt;
+    if (age < SESSION_TIMEOUT_MS) {
+      return res.status(409).json({
+        error: 'A session is already active.',
+        startedAt: activeSession.startedAt,
+      });
+    }
+    // stale flag — release and proceed
+    releaseSession('stale');
+  }
+
+  activeSession = { startedAt: Date.now() };
+  const watchdog = setTimeout(() => releaseSession('timeout'), SESSION_TIMEOUT_MS);
+
+  try {
+    const result = await doExpensiveWork(req.body);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  } finally {
+    clearTimeout(watchdog);
+    releaseSession('done');
+  }
+});
+```
+
+## Where this works
+
+- **Single-server, single-process** apps. In-memory flag is server-local.
+- **Low-frequency actions.** Rejecting parallel requests is acceptable UX when they're rare.
+- **Naturally serial operations.** Spawning a CLI that owns the working directory; running a DB migration; kicking off a long rebuild.
+
+## Where this doesn't work
+
+- **Multi-worker or multi-server.** Each worker has its own variable; the guard is effectively absent. Move to a Redis lock or a filesystem lockfile.
+- **High-frequency parallel work.** If users expect concurrent execution, this blocks them all behind a queue. Use a proper job queue instead.
+- **Queueing, not rejecting.** If you want the second request to wait rather than fail, add a promise chain or a proper queue. The 409 pattern is specifically for "try again in a minute".
+
+## Gotchas
+
+- **Release in `finally`, not after `res.json`.** If the work throws, you still need to release. Otherwise the flag stays set until the watchdog fires — and 2 minutes of 409s for a single blip is painful.
+- **Watchdog is mandatory.** Without it, a hang or an unreleased promise can strand the flag until server restart.
+- **Don't make the flag async-dependent.** Checking `await something()` before setting the flag introduces a race — two requests both find it null and both set it. Set synchronously at the entry point.
+- **Logging matters.** When a user hits a 409, they want to know why and when the current session started. Include `startedAt` in the response.
+- **Admin reset path.** If the watchdog misses a case (shouldn't happen; does happen), have a `POST /api/admin/release-sessions` button so you're not restarting the server to unstick things.
+- **"Active" as information is valuable.** Expose `GET /api/session-status` so UIs can disable the trigger button while a session is active, instead of users clicking and getting 409s.
+
+## See also
+
+- [patterns/ai-chat-dispatch-to-claude-cli](../../patterns/ai-chat-dispatch-to-claude-cli/) — the main consumer
+- [patterns/sqlite-job-queue](../../patterns/sqlite-job-queue/) — the "actually queue, don't reject" alternative

@@ -1,0 +1,89 @@
+---
+title: Task ID generation convention
+description: "`{category}-{descriptor}-{number}` — the format that makes task IDs greppable, sortable, and speakable."
+---
+
+> **Source:** [atrium/CLAUDE.md](https://github.com/RogerSquare/atrium/blob/main/CLAUDE.md) — the convention · task files across all projects
+> **Category:** Snippet — convention
+
+**Task ID format** — `{category}-{descriptor}-{number}`. Three dash-separated tokens. Category tells you what kind of work; descriptor gives a two-word slug; number disambiguates among similar ids. Short enough to type, structured enough to grep.
+
+## Shape
+
+```
+feat-auth-001            # new feature
+bug-port-009             # bug in portfolio
+comp-taskmodal-004       # component build
+ui-filters-003           # UI improvement
+opt-perf-004             # optimization
+devops-deploy-005        # infrastructure
+mobile-header-002        # mobile-specific
+```
+
+## Categories (Atrium's convention)
+
+| Prefix | Meaning |
+|---|---|
+| `feat-` | new feature |
+| `bug-` | bug fix |
+| `comp-` | component build or refactor |
+| `ui-` | UI/UX improvement |
+| `opt-` | optimization (perf, security, reliability, architecture) |
+| `devops-` | infrastructure, deployment, CI |
+| `mobile-` | mobile-specific work |
+
+Adjust for your project. What matters is that the list is closed and documented somewhere authoritative.
+
+## Suggested-id helper
+
+```js
+const CATEGORIES = ['feat', 'bug', 'comp', 'ui', 'opt', 'devops', 'mobile'];
+
+function suggestId(category, title) {
+  if (!CATEGORIES.includes(category)) throw new Error(`unknown category: ${category}`);
+  const slug = title.toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, '')
+    .split(/\s+/).filter(Boolean)
+    .slice(0, 2)                               // first two significant words
+    .join('-').slice(0, 16);
+  return `${category}-${slug}-001`;
+}
+
+suggestId('bug', 'Admin project link field rejects scheme-less URLs');
+// → 'bug-admin-project-001'
+```
+
+## Server-side number assignment
+
+```js
+async function assignFinalId(tentativeId) {
+  // Strip trailing "-NNN" and look up the next free number
+  const prefix = tentativeId.replace(/-\d+$/, '');
+  const existing = await listTasks({ idPrefix: prefix + '-' });
+  const numbers = existing.map(t => parseInt(t.id.slice(prefix.length + 1), 10)).filter(Number.isFinite);
+  const next = numbers.length ? Math.max(...numbers) + 1 : 1;
+  return `${prefix}-${String(next).padStart(3, '0')}`;
+}
+```
+
+Atomic enough for low-concurrency personal tools; a fully race-free version uses a DB sequence or a filesystem lock.
+
+## Why this shape
+
+- **Prefix is a reliable filter.** `ls bug-*` lists all bugs; `grep -l '^id: feat-' *.md` finds features.
+- **Descriptor is short but descriptive.** Two words is the sweet spot. Any more and the id becomes hard to type or speak aloud ("task feat-implement-user-login-with-jwt-tokens-001"). Any fewer and collisions happen too soon.
+- **Three-digit number.** 999 variants is plenty for any reasonable project; leading zeros sort lexicographically.
+- **Kebab case only.** No underscores (hard to see in code), no camelCase (inconsistent with file conventions), no spaces.
+
+## Gotchas
+
+- **Don't change the convention mid-project.** Renaming `feat-001` to `feature-001` breaks every reference in every task file, every branch name, every PR title.
+- **Auto-number on server, not on client.** Client-generated `001` will collide; the server should take the tentative id and assign the actual suffix.
+- **Don't reuse numbers after delete.** If `bug-xyz-005` was deleted, don't reassign 005 to the next bug-xyz task — breaks history. Use a monotonic counter.
+- **Reserve category prefixes.** If the user types `foo-thing-001`, either add `foo-` to the known list or reject. Ambiguous prefixes make filtering harder.
+- **Agents must follow the convention.** Bad agent behavior (naming tasks `task-001`, `new-task`, timestamps) makes the board unsearchable. The `agent-task-board-protocol` enforces this in `CLAUDE.md`.
+
+## See also
+
+- [patterns/agent-task-board-protocol](../../patterns/agent-task-board-protocol/) — where this convention is codified for agents
+- [components/create-task-modal](../../components/create-task-modal/) — UI that suggests ids

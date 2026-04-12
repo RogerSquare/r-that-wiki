@@ -1,0 +1,47 @@
+---
+title: Chat panel
+description: Socket.IO-backed chat with agents and other humans. Sound notification toggle, markdown support.
+---
+
+import ChatPanel from '../../../examples/chat-panel.tsx';
+
+> **Source:** [atrium/frontend/src/components/ChatPanel.jsx](https://github.com/RogerSquare/atrium/blob/main/frontend/src/components/ChatPanel.jsx)
+> **Category:** Composite component
+
+**Chat panel** — persistent sidebar chat where the user talks to Claude (or other agents) with the board as context. Messages persist server-side; a sound toggle notifies when an agent replies.
+
+## What it is
+
+A classic bubble chat. User messages right-aligned, agent messages left-aligned. Typing indicator shows while an agent is thinking (the backend is spawning the Claude CLI — see [AI chat dispatch](../../patterns/ai-chat-dispatch-to-claude-cli/)). History persists as a JSON file on the server.
+
+## Why it exists
+
+The AI dispatch pattern is only useful if there's somewhere to read and write messages. The chat panel is that UI — available everywhere in the app, not buried in a separate page.
+
+## Live
+
+<div style={{ padding: 20, background: '#020617', borderRadius: 8, display: 'flex', justifyContent: 'center' }}>
+  <ChatPanel client:load />
+</div>
+
+The demo is client-side only — "Send" appends to local state. Real Atrium posts to `POST /api/ai/chat` and the response streams back as an agent message.
+
+## How it's used
+
+- **Atrium** — docked chat panel (collapsible) on the right side of the board view; mobile shows it as a full-screen modal
+- **Pattern generalizes** to any app with embedded AI assistance
+
+## Gotchas
+
+- **Sound preference persists locally, not server-side.** User toggles it in one browser tab and doesn't expect every other tab to mute too. localStorage, keyed by user.
+- **Message order is last-write-wins.** If the socket delivers messages out of order (rare, but possible across reconnects), sort by timestamp on render.
+- **Concurrency guard applies here too.** The `POST /api/ai/chat` endpoint rejects while another session is active. The UI should disable Send and show a hint rather than post and fail.
+- **Markdown rendering is worthwhile.** Agents reply with code blocks, headings, lists. Render with `react-markdown` + `remark-gfm`, but sanitize: set `skipHtml: true` to prevent HTML injection from LLM output.
+- **Long messages truncate visually.** Agent responses can be paragraphs. Collapse after N lines with "show more" — otherwise one reply fills the whole panel.
+- **Mobile full-screen needs an escape hatch.** If the chat panel owns the screen, tapping the board region behind it should dismiss. Don't trap the user.
+- **Empty state matters.** New users see an empty chat and don't know what to type. Seed with a one-line hint: "Ask about tasks, projects, or what to work on next."
+
+## See also
+
+- [patterns/ai-chat-dispatch-to-claude-cli](../../patterns/ai-chat-dispatch-to-claude-cli/) — the backend
+- [patterns/socket-io-live-state-fanout](../../patterns/socket-io-live-state-fanout/) — how messages propagate to open tabs

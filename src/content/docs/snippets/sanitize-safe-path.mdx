@@ -1,0 +1,75 @@
+---
+title: safePath — filesystem boundary check
+description: Reject any user-supplied path that escapes the intended base directory. One function, one rule.
+---
+
+> **Source:** [atrium/backend/lib/sanitize.js](https://github.com/RogerSquare/atrium/blob/main/backend/lib/sanitize.js)
+> **Category:** Snippet — security
+
+**safePath** — when a route accepts a filename or path from the user, run it through this helper before touching disk. If the resolved absolute path doesn't start with the intended base directory, return null. No path traversal, no surprise filesystem writes.
+
+## What it is
+
+Two lines of real code plus error handling. Takes a base directory and an untrusted input; resolves the joined path to an absolute form; checks that it begins with the base. That's the whole check.
+
+## Why it exists
+
+**The problem:** Naively trusting `req.params.filename` or `req.body.path` opens the door to classic directory-traversal bugs. `../../../../etc/passwd` gets joined onto your base and resolves somewhere you never intended. File reads leak secrets; file writes overwrite config.
+
+**The fix:** resolve and check. `path.resolve` normalizes `..` / `.` / redundant separators. Comparing the result to the base with `startsWith` ensures the final path is inside the allowed directory.
+
+## Code
+
+```js
+const path = require('path');
+
+function sanitizeFilename(name) {
+  // Strip anything that's not a safe filename character
+  if (typeof name !== 'string') return null;
+  return name.replace(/[^a-zA-Z0-9._-]/g, '') || null;
+}
+
+function safePath(baseDir, userInput) {
+  if (!userInput || typeof userInput !== 'string') return null;
+  const absolute = path.resolve(baseDir, userInput);
+  const normalizedBase = path.resolve(baseDir) + path.sep;
+  if (!absolute.startsWith(normalizedBase) && absolute !== path.resolve(baseDir)) {
+    return null;                   // escape attempt
+  }
+  return absolute;
+}
+
+module.exports = { sanitizeFilename, safePath };
+```
+
+## Use
+
+```js
+const { safePath, sanitizeFilename } = require('./lib/sanitize');
+
+router.get('/tasks/:project/:id', (req, res) => {
+  const safeProject = sanitizeFilename(req.params.project);
+  const safeId = sanitizeFilename(req.params.id);
+  if (!safeProject || !safeId) return res.status(400).json({ error: 'invalid name' });
+
+  const full = safePath(TASKS_DIR, path.join(safeProject, `${safeId}.md`));
+  if (!full) return res.status(400).json({ error: 'invalid path' });
+
+  res.sendFile(full);
+});
+```
+
+## Gotchas
+
+- **`path.resolve`, not `path.join`.** `join` normalizes but doesn't collapse `..` against the base — still traversable. `resolve` anchors at cwd unless given an absolute base.
+- **Add the trailing separator.** `/var/www/site` startsWith `/var/www/siteX` returns true. Append `path.sep` to the base before comparing — or use `path.relative` and check it doesn't start with `..`.
+- **Symlinks are a different threat.** Even a safe path can be a symlink pointing elsewhere. If you serve user-writable directories, also check with `fs.realpath()` before read/write.
+- **Case sensitivity differs by OS.** `/var/www/SITE` and `/var/www/site` are different paths on Linux, same on macOS (default) and Windows. Normalize case if you don't trust the input.
+- **Don't rely on this for authorization.** A valid path inside the base dir can still be something the *user* shouldn't access. Pair with role checks; don't substitute.
+- **Encoding.** URL-decoded `%2E%2E%2F` is `../`. Express decodes params before handing them off — you get the decoded string. Still, if you build URLs elsewhere, decode first.
+- **Null bytes.** Some platforms treat `\0` specially in paths. Reject strings containing null characters unconditionally.
+
+## See also
+
+- [projects/atrium](../../projects/atrium/) — where this is used
+- [patterns/folder-as-project](../../patterns/folder-as-project/) — the data model this protects
