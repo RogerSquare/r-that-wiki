@@ -1,0 +1,82 @@
+---
+title: dockview
+description: Lightweight Docker homelab dashboard with real-time container monitoring.
+---
+
+> **Source:** [RogerSquare/dockview](https://github.com/RogerSquare/dockview)
+> **Category:** Project tour
+
+**dockview** — a single-page web dashboard for a homelab's Docker daemon. See running containers, start/stop/restart them, watch CPU and memory in real time, tail logs. No build step on the frontend.
+
+## What it is
+
+A Node/Express backend that talks to the local Docker daemon through the Docker socket, plus a plain HTML/CSS/JS frontend served statically. Socket.IO pushes state updates; the frontend renders them live with vanilla JS. Docker Compose file ships it as one container.
+
+## Stack
+
+| Layer | Technology |
+|---|---|
+| Backend | Express 5, TypeScript |
+| Docker integration | `dockerode` over `/var/run/docker.sock` |
+| System metrics | `systeminformation` |
+| Realtime | Socket.IO 4.8 |
+| Frontend | Plain HTML + CSS + JS (no bundler) |
+| Deployment | Docker Compose |
+
+## Shape
+
+```
+dockview/
+├── src/
+│   ├── server.ts                     # Express + Socket.IO
+│   ├── docker.ts                     # dockerode wrapper
+│   ├── metrics.ts                    # systeminformation poller
+│   └── routes.ts
+├── public/
+│   ├── index.html
+│   ├── app.js                        # vanilla, no framework
+│   └── style.css
+├── Dockerfile
+└── docker-compose.yml
+```
+
+## Features
+
+- **Container management** — start, stop, restart from the browser
+- **Real-time state** — container list + system metrics refresh via WebSocket
+- **Metrics** — CPU, memory, disk with progress bars
+- **Logs** — last 100 lines of any container
+- **Zero config** — finds the Docker socket automatically
+
+## Deploy
+
+```yaml
+# docker-compose.yml (ships with repo)
+services:
+  dockview:
+    image: dockview:latest
+    ports: ["8080:3000"]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    restart: unless-stopped
+```
+
+`docker compose up -d` and the dashboard is at `http://host:8080`.
+
+## Non-obvious design choices
+
+- **No frontend framework.** Just HTML/CSS/JS served from `public/`. One person, one dashboard, known browser — React would be overkill. Refreshing state via Socket.IO keeps the DOM updates small and manual.
+- **Read-only socket mount (`:ro`).** Dockview reads container state and sends Docker API commands (start/stop), but never executes inside containers. Mount flag is belt-and-suspenders.
+- **Metrics poll interval is 2s.** Aggressive enough for live feel, not aggressive enough to eat CPU on the host.
+- **No auth by default.** Intended for LAN use. Add a reverse proxy with basic auth (nginx, Caddy) if you expose it.
+
+## Gotchas
+
+- **Mounting the Docker socket is privileged access.** Anything inside the dockview container can control the entire Docker daemon. Treat the container as trusted.
+- **`systeminformation` reads host metrics only when the container can see them.** For containerized deployment, mount `/proc`, `/sys`, or run the backend on the host directly — otherwise CPU/memory readings reflect the container, not the host.
+- **Container logs are capped at 100 lines** for the UI display. For longer tails, shell into the container directly.
+- **Restart counts don't always match** — Docker's internal restart counter behaves oddly across daemon restarts. Not a dockview bug, a Docker quirk.
+
+## See also
+
+- [patterns/service-registry-control-plane](../../patterns/service-registry-control-plane/) — conceptually similar (one pane to manage multiple services), different substrate (Atrium manages arbitrary processes; dockview manages Docker containers)

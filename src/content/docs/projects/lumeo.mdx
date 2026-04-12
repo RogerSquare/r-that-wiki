@@ -1,0 +1,48 @@
+---
+title: Lumeo
+description: Native iOS SwiftUI app for Replicate image generation with a GPT-4o mini prompt assistant.
+---
+
+> **Source:** private
+> **Category:** Project tour
+
+**Lumeo** — a native iOS app that wraps Replicate's image generation API behind a SwiftUI interface, with GPT-4o mini translating plain-language descriptions into model-ready prompts.
+
+## What it is
+
+An iOS app, not a service. Users describe what they want in conversational language; GPT-4o mini converts that to an optimized prompt; Replicate generates the image; the app displays and stores results. All history lives locally.
+
+Intent: make AI image generation usable by non-technical people. Raw prompt engineering (negative prompts, guidance scales, sampler choice) is hidden behind sliders and dropdowns.
+
+## Stack
+
+| Layer | Technology |
+|---|---|
+| Platform | iOS 17+, SwiftUI |
+| Graphics | Metal shaders for mesh-gradient animations |
+| API — images | Replicate prediction API |
+| API — prompts | OpenAI GPT-4o mini |
+| Persistence | UserDefaults (payloads + responses) |
+| Design | Light/dark mode aware, compositional gallery layout |
+
+## Flow
+
+1. User types or speaks a description ("a cyberpunk cat at sunset")
+2. GPT-4o mini transforms that into an optimized prompt using tokenization-aware techniques
+3. SwiftUI controls let the user tune guidance scale, steps, LoRA, aspect ratio, output quality
+4. App submits a Replicate prediction, polls for completion, displays the result
+5. Payload + response persist locally for recall
+
+## Non-obvious design choices
+
+- **UserDefaults over CoreData.** Payloads are small and flat. UserDefaults is enough; CoreData overhead wasn't justified.
+- **Polling, not webhooks.** Replicate supports both; polling keeps the backend-free architecture intact. Webhooks would need a server the app can't assume it has.
+- **Mesh gradient animation is Metal, not SwiftUI's built-in.** Needed more control over the shader; also a portfolio piece.
+- **Prompt assistant is deliberately opinionated.** GPT-4o mini is instructed to produce prompts that work well on the specific Replicate models Lumeo supports, not generic ones.
+
+## Gotchas
+
+- **Replicate model IDs drift.** Pinning a specific version hash means old users keep working; using `latest` means new users get the best model but old deployments can break. Pick an upgrade strategy.
+- **API keys in an iOS app are a problem.** Embedded keys can be extracted from the binary. For personal use: fine. For distribution: back with a tiny proxy server that holds the real keys.
+- **Image results don't persist remotely.** Replicate's result URLs expire. Lumeo caches images locally on first fetch; if it misses that window, history is orphaned. Cache aggressively.
+- **GPT-4o mini can hallucinate unsupported parameters.** Validate the prompt assistant's output against the Replicate model's accepted fields before submitting.

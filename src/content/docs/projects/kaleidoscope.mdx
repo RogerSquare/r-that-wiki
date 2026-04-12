@@ -1,0 +1,58 @@
+---
+title: Kaleidoscope
+description: Interactive collection of terminal UI demos built with TypeScript, React, and Ink.
+---
+
+> **Source:** [RogerSquare/kaleidoscope](https://github.com/RogerSquare/kaleidoscope)
+> **Category:** Project tour
+
+**Kaleidoscope** — a library of isolated terminal UI demos. Each one shows a specific animation or interaction pattern used by modern TUIs (Claude Code, lazygit, btop). Run one, see how it works, copy the technique.
+
+## What it is
+
+A TypeScript CLI app. Browse a menu of ~30 demos; each is a self-contained React component rendered to the terminal via [Ink](https://term.ink/). No "app" to build — this is a reference library you keep open while writing your own TUI.
+
+## Stack
+
+| Layer | Technology |
+|---|---|
+| Language | TypeScript 5 |
+| Framework | Ink 7 (React for terminals) |
+| Runtime | Node 20+ via `tsx` (no build step) |
+| Tests | Vitest + Ink's `ink-testing-library` |
+| CI | GitHub Actions matrix (Node 20, 22) |
+
+## Demo categories
+
+- **Animations** — Claude spinner, progress bars, streaming text, thinking indicators, loading skeletons, gradient text
+- **Interactive components** — selection menus, text input and forms, file trees, tabs, modals
+- **Layouts** — flexbox patterns, split panes, status bars, headers
+- **Effects** — color waves, pulse, shimmer, braille spinners
+
+Each demo lives in its own `.tsx` file under `src/demos/` and exports a single React component.
+
+## Running
+
+```bash
+git clone https://github.com/RogerSquare/kaleidoscope
+cd kaleidoscope && npm install
+npm run dev                    # interactive picker
+npm run dev -- claude-spinner  # jump straight to one demo
+```
+
+## Non-obvious design choices
+
+- **No build step.** `tsx` runs TypeScript directly; the repo is usable as-read. Good for a reference project — zero onboarding friction.
+- **Demos are isolated.** Each is a pure function returning Ink JSX. They don't share state or cross-import. Copy-paste is the intended adoption path.
+- **Tests use `ink-testing-library`.** Renders to a virtual frame buffer you can assert against. Lets each demo have a unit test that verifies the output shape without fiddling with real terminals.
+
+## Gotchas
+
+- **Ink re-renders on every state update.** Unlike browser React, there's no intermediate DOM — the whole frame re-renders. Memoize aggressively if a demo stutters.
+- **Color support depends on the host terminal and `FORCE_COLOR`.** Chalk's auto-detection sometimes reads zero color support when piped. Set `FORCE_COLOR=3` if your demo goes monochrome.
+- **`util.styleText` is Node 20.12+.** One test helper uses it; the CI matrix had to drop Node 18 (tracked as `Kaleidoscope/bug-node18-compat-001`).
+- **Terminal resize isn't free.** Ink subscribes to resize events but complex layouts can flicker on small windows. Debounce resize-driven state updates if you see flashing.
+
+## See also
+
+- [projects/cairn](../cairn/) — Cairn's SSH portfolio uses the same Ink primitives for a real app

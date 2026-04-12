@@ -1,0 +1,78 @@
+---
+title: Artifex
+description: Self-hosted AI image gallery with ML auto-tagging, captions, NSFW detection, and federation.
+---
+
+> **Source:** [RogerSquare/Artifex](https://github.com/RogerSquare/Artifex)
+> **Category:** Project tour
+
+**Artifex** — a self-hosted AI image gallery. Upload images, get automatic content tags, natural-language captions, NSFW flags, and full-text search. Multiple Artifex instances can federate and share galleries.
+
+## What it is
+
+A Node/Express backend + React/Vite frontend. Background job queue runs images through three ML pipelines (WD Tagger for tags, BLIP for captions, a NSFW classifier). SQLite holds everything; `better-sqlite3` keeps reads cheap.
+
+## Stack
+
+| Layer | Technology |
+|---|---|
+| Backend | Express 5, `better-sqlite3`, JWT auth, Sharp, FFmpeg |
+| Frontend | React 19, Vite, Tailwind 4, `@phosphor-icons/react` |
+| ML — tags | WD Tagger (SwinV2) via Python subprocess on `:7865` |
+| ML — captions | BLIP via Python subprocess on `:7866` |
+| ML — NSFW | `@huggingface/transformers` in Node (ONNX) |
+| Realtime | Job queue polling + socket.io for progress |
+| Federation | HTTP between peer instances |
+
+## Shape
+
+```
+artifex/
+├── backend/
+│   ├── server.js                     # Express entrypoint
+│   ├── routes/
+│   │   ├── auth.js, users.js
+│   │   ├── images.js, collections.js, tags.js
+│   │   ├── federation.js             # peer sync + proxy
+│   │   └── admin.js
+│   ├── lib/db.js                     # schema, migrations
+│   ├── jobs/                         # tagger, captioner, nsfw pipelines
+│   ├── uploads/                      # original + derived assets
+│   └── ml/                           # Python subprocess entrypoints
+├── frontend/
+│   └── src/
+│       ├── App.jsx
+│       ├── components/               # PhotoViewer, ImageCard, CompareView, ...
+│       ├── context/AuthContext.jsx
+│       └── hooks/
+└── .github/workflows/ci.yml          # backend + frontend matrix
+```
+
+## Ports
+
+| Service | Port |
+|---|---|
+| Backend (Express) | `3002` |
+| Frontend (Vite dev) | `5175` |
+| WD Tagger (Python) | `7865` |
+| BLIP Captioner (Python) | `7866` |
+
+## Non-obvious design choices
+
+- **SQLite, not Postgres.** Fits in one file. `better-sqlite3` is synchronous and fast enough for single-user self-hosting. Backups = `cp`.
+- **Job queue is SQLite-backed.** Polling every 3s, single concurrency. No Redis, no BullMQ. Enough for a queue depth in the thousands.
+- **ML as subprocesses, not workers.** Python servers on loopback ports let the Node backend stay Node and the ML models stay in their native Python ecosystem. Cross-language boundary is HTTP JSON.
+- **Federation by HTTP pull.** Peers expose a subset of their API; `federation.js` proxies and normalizes remote images so the UI treats remote and local uniformly.
+- **Frontend renders remote images through a proxy route** rather than hot-linking. Keeps auth headers local to your instance.
+
+## Gotchas
+
+- **ML Python servers need to be started separately.** Not managed by the Node backend. Crash → uploads stall silently in the queue.
+- **WD Tagger requires ONNX runtime compatibility.** Newer opset versions may not work on some hardware; the Python subprocess pattern insulates Node from ONNX drama.
+- **`util.styleText` is Node 20.12+** — used in a test helper. The CI matrix used to include Node 18 and broke on this; matrix dropped Node 18. Pattern: if you use a newer stdlib API in tests, update the CI matrix to match.
+- **React lint had a full catalog of issues on the first CI enable:** unused catch bindings, setState synchronously in effects, a component defined inside another component's render, a conditional `useMemo`. All fixed across three commits — tracked as `Artifex/bug-ci-lint-001` and siblings.
+- **NSFW detection is a classifier, not a filter.** It tags; you decide what to do with the tag. Don't treat it as gospel.
+
+## See also
+
+- [patterns/stable-project-ids](../../patterns/stable-project-ids/) — the short-id pattern could apply to Artifex collections, currently by display-name key

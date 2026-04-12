@@ -1,0 +1,71 @@
+---
+title: mdtask
+description: Terminal task manager that stores tasks as Markdown files with YAML frontmatter.
+---
+
+> **Source:** [RogerSquare/mdtask](https://github.com/RogerSquare/mdtask) · [mdtask on npm](https://www.npmjs.com/package/mdtask)
+> **Category:** Project tour
+
+**mdtask** — a command-line task manager. Tasks are plain Markdown files in a `.tasks/` directory inside your project. Schema is just YAML frontmatter; there's no database, no cloud. Grep it, git-track it, hand-edit it.
+
+## What it is
+
+A Node CLI installed globally or run via `npx`. Commands manage a local `.tasks/` directory: add, list, complete, edit, filter by tag/priority/status. Each task is one `.md` file with structured metadata on top and a freeform body below.
+
+If the pattern sounds familiar — it's the same one as [Atrium's task board](../../patterns/markdown-as-database/), extracted into a standalone CLI for personal tracking without the web UI.
+
+## Stack
+
+| Layer | Technology |
+|---|---|
+| Language | TypeScript |
+| Runtime | Node 18+ (distributed on npm) |
+| Install | `npm install -g mdtask` or `npx mdtask` |
+
+## Commands
+
+```bash
+mdtask add "Buy groceries" -p high -t shopping
+mdtask list                        # all open tasks
+mdtask list -t shopping            # filter by tag
+mdtask list --status done
+mdtask done <id>                   # mark complete
+mdtask edit <id>                   # opens in $EDITOR
+mdtask rm <id>
+```
+
+## File shape
+
+```markdown
+---
+id: 001
+title: Buy groceries
+status: todo
+priority: high
+tags: [shopping]
+created_at: 2026-04-12
+---
+
+Milk, eggs, coffee.
+```
+
+Files live at `.tasks/001.md`, `.tasks/002.md`, etc. IDs are sequential within the directory.
+
+## Non-obvious design choices
+
+- **Per-project `.tasks/` directory.** Tasks live next to the code they're about. Cloning a repo gets you the tasks. `.gitignore` it if you want them private.
+- **No global task store.** Run the command inside a project; it finds or creates `.tasks/` at the nearest ancestor. Intentional: prevents a giant personal task blob across all projects.
+- **YAML is the schema.** Add a field to the frontmatter; it shows up in `list` output. No migrations.
+- **Uses `$EDITOR` for edits.** Instead of building an interactive UI, delegate to the editor the user already knows.
+
+## Gotchas
+
+- **Frontmatter order matters for readability, not parsing.** `gray-matter` handles any order, but keep `id` and `title` at the top so `head` and `cat` are useful.
+- **IDs are sequential, not UUIDs.** Easier to type; hard to merge across copies of `.tasks/` from different branches. If you git-branch and both branches add tasks, you'll collide on ids at merge time.
+- **No concurrent-edit protection.** If two shells run `mdtask add` simultaneously, you can get duplicate ids. Rare in practice for a personal CLI.
+- **Editor integration is primitive.** `mdtask edit <id>` just opens the file; it doesn't know the task is now `in_progress`. For that, use the API-style pattern in Atrium.
+
+## See also
+
+- [patterns/markdown-as-database](../../patterns/markdown-as-database/) — the data-model pattern mdtask and Atrium share
+- [projects/atrium](../atrium/) — the web-UI counterpart to this CLI

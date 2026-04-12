@@ -1,0 +1,74 @@
+---
+title: markstack
+description: Bookmark manager REST API with OpenAPI documentation, auth, and full-text search.
+---
+
+> **Source:** [RogerSquare/markstack](https://github.com/RogerSquare/markstack)
+> **Category:** Project tour
+
+**markstack** — a Node/Express REST API for managing bookmarks. CRUD, JWT auth, collections, tags, full-text search, pagination, rate limiting, and interactive OpenAPI docs at `/docs`.
+
+## What it is
+
+An API-only service. No frontend in this repo — the intent is that markstack is a clean backend someone (or another app) can build a UI on top of. Swagger UI at `/docs` lets you drive the API directly from a browser.
+
+## Stack
+
+| Layer | Technology |
+|---|---|
+| Language | TypeScript |
+| Server | Express 5 |
+| Database | SQLite (`better-sqlite3`) |
+| Auth | JWT (register / login / refresh) |
+| Docs | `swagger-jsdoc` + `swagger-ui-express` |
+| Validation | Zod or hand-rolled (per route) |
+| Rate limit | `express-rate-limit` on public endpoints |
+
+## API surface
+
+- **Auth** — `POST /auth/register`, `POST /auth/login`, `POST /auth/refresh`
+- **Bookmarks** — full CRUD, URL validation, pagination
+- **Collections** — group bookmarks into sets
+- **Tags** — tag bookmarks, filter by tag
+- **Search** — full-text across titles, descriptions, URLs
+- **Docs** — `GET /docs` (Swagger UI), `GET /docs.json` (spec)
+
+## Shape
+
+```
+markstack/
+├── src/
+│   ├── server.ts                     # Express entrypoint
+│   ├── routes/
+│   │   ├── auth.ts
+│   │   ├── bookmarks.ts
+│   │   ├── collections.ts
+│   │   └── tags.ts
+│   ├── db/
+│   │   ├── schema.sql
+│   │   └── migrations/
+│   ├── middleware/
+│   │   ├── auth.ts                   # JWT verify
+│   │   └── rateLimit.ts
+│   └── types.ts
+├── openapi/                          # swagger-jsdoc annotations
+└── tests/
+```
+
+## Non-obvious design choices
+
+- **API-only, intentionally.** The README is the only "UI". Forces the API to be good enough to use without a custom client.
+- **Swagger annotations inline in route files**, not a separate spec file. Edits to the endpoint and its docs happen in one place — they drift less.
+- **Full-text search is SQLite FTS5**, not an external index. One file, `MATCH` queries, fast enough for millions of rows on a single machine.
+- **JWT refresh rotation.** Refresh tokens are single-use; each refresh issues a new pair and invalidates the old.
+
+## Gotchas
+
+- **URL validation is permissive.** Accepts anything that parses as a URL — doesn't check reachability. Dead links will accumulate; add a periodic job if you care.
+- **Rate limits are per-IP.** Behind a proxy, configure `trust proxy` or rate-limit everyone gets lumped together.
+- **FTS5 requires migration care.** Adding a field to the searchable set means rebuilding the FTS table. Plan the migration or accept stale index.
+- **No import/export yet.** Bookmarks only come in through the API. Getting data out is a `GET /bookmarks?limit=∞`.
+
+## See also
+
+- [projects/atrium](../atrium/) — another Express+SQLite service for comparison

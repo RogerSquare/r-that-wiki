@@ -1,0 +1,77 @@
+---
+title: gh-collab-manager
+description: A GitHub collaborator management tool that wraps the `gh` CLI.
+---
+
+> **Source:** [RogerSquare/gh-collab-manager](https://github.com/RogerSquare/gh-collab-manager) (local project)
+> **Category:** Project tour
+
+**gh-collab-manager** — a web dashboard for managing collaborators, invitations, and co-authors across all your GitHub repositories at once, driven by the `gh` CLI under the hood.
+
+## What it is
+
+An Express server that shells out to the `gh` CLI for every GitHub operation (no REST token juggling on your end — `gh auth login` handles that), a plain HTML/CSS/JS frontend, and an audit log of every mutating action. Solves the "I have N repos and want to see who has access to all of them, without clicking through N settings pages" problem.
+
+## Stack
+
+| Layer | Technology |
+|---|---|
+| Backend | Express 5 |
+| GitHub auth | `gh` CLI (inherits your authenticated session) |
+| Storage | `audit.json` rolling log (max 500 entries) |
+| Frontend | Plain HTML / CSS / vanilla JS, GitHub-ish dark theme |
+| Port | `3005` by default (env: `PORT`) |
+
+## Features
+
+- **Repo list** — shows every repo you own or collaborate on
+- **Collaborators view** — per-repo list of who has what access
+- **Add / remove collaborators** — bulk across selected repos
+- **Pending invitations** — see and cancel invites
+- **Contributor list** — history of who has ever pushed
+- **Co-author removal** — strip a co-author from commit trailers
+- **Repo metadata** — description, topics, visibility, default branch
+- **Repo reset** — destructive; nuke and re-create from a known state
+- **Audit log** — every mutation is logged with action + details + timestamp
+
+## Shape
+
+```
+gh-collab-manager/
+├── server.js                         # Express + gh CLI calls
+├── audit.json                        # append-only log (rotated at 500)
+├── public/
+│   ├── index.html                    # main UI
+│   └── claude-projects.html          # separate "Claude-touched projects" view
+└── package.json
+```
+
+## API surface (high level)
+
+- `GET /api/user` · `GET /api/repos`
+- `GET /api/repos/:owner/:repo/collaborators` · `POST` to add · `DELETE /:username` to remove
+- `GET /api/repos/:owner/:repo/invitations` · `DELETE /:id` to cancel
+- `GET /api/repos/:owner/:repo/contributors`
+- `POST /api/repos/:owner/:repo/remove-coauthor`
+- `GET /api/repos/:owner/:repo/metadata`
+- `POST /api/repos/:owner/:repo/reset` — destructive
+- `GET /api/claude-projects` — scan for claude-code-managed projects
+- `GET /api/audit` — read the audit log
+
+## Non-obvious design choices
+
+- **`gh` CLI, not Octokit.** The CLI already owns your session, pagination defaults, rate-limit handling. Using it keeps the server stateless from an auth standpoint — no tokens in env vars.
+- **`execFile`, not `exec`.** Arguments pass as array elements, not a shell string. Eliminates an entire category of injection bug when usernames or repo names contain unusual characters.
+- **Audit log as append-only JSON.** Up to 500 entries, then rolled. Cheap, readable, versionable.
+- **No frontend framework.** Single-user admin tool — HTML/CSS/JS is enough.
+
+## Gotchas
+
+- **`gh` must be installed and authenticated** on the server. If the backend runs somewhere you haven't `gh auth login`'d, everything silently returns 401s.
+- **Destructive actions lack confirmation by default.** `reset` and bulk collaborator removal do exactly what they say — route them through a confirmation UI before production use.
+- **Rate limiting inherits from `gh`.** Burst requests can trip GitHub's secondary rate limits; the tool doesn't add its own backoff.
+- **Audit log is not cryptographic.** It's a JSON file the same process writes to — trivial to tamper. Good enough for "did I do that?" recall, not for anything legal.
+
+## See also
+
+- [projects/atrium](../atrium/) — similar "one pane of glass for many things" philosophy

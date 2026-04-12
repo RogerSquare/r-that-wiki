@@ -1,0 +1,51 @@
+---
+title: SDH-GameThemeMusic
+description: Steam Deck Decky Loader plugin that plays game theme music on game pages. Continuation fork.
+---
+
+> **Source:** [RogerSquare/SDH-GameThemeMusic](https://github.com/RogerSquare/SDH-GameThemeMusic)
+> **Category:** Project tour
+
+**SDH-GameThemeMusic** — a Decky Loader plugin for Steam Deck that finds and plays theme music for whatever game page you're browsing. Runs in the SteamOS UI layer; works for Steam and non-Steam games.
+
+## What it is
+
+A Decky Loader plugin (TypeScript + React frontend, Python backend running on-device) that looks up theme music by game name, plays it in the background on the game details page, and stops when you navigate away. Compatible with the AudioLoader plugin's mixer.
+
+This is a **continuation fork** of the upstream project that's no longer actively maintained — the fork exists to keep it working as Decky Loader and SteamOS evolve.
+
+## Stack
+
+| Layer | Technology |
+|---|---|
+| Frontend | Decky Loader React plugin API, TypeScript |
+| Backend (on-device) | Python via Decky's plugin runtime |
+| Audio source | YouTube (scraped), community-contributed overrides |
+| Compatibility | Decky Loader v3+, AudioLoader v1.5+ |
+| Distribution | Decky plugin store |
+
+## How it works
+
+1. User opens a game page in the Steam client
+2. Plugin reads the game name from SteamOS state
+3. Backend searches YouTube for `"<game name>" theme song`
+4. Audio streams into the Steam UI audio context; AudioLoader mixer balances with system sound
+5. Navigating away stops playback; the plugin remembers user overrides via a game context menu
+
+## Non-obvious design choices
+
+- **On-device Python backend.** Decky Loader plugins have a small Python backend that runs on the Steam Deck itself; the frontend calls into it via IPC. Kept architecture symmetrical with other Decky plugins.
+- **YouTube as source.** Theme music rights are messy; YouTube gives the broadest coverage with fewest legal collisions. Users can override per-game.
+- **No caching by default.** Streaming pulls fresh each time. A cache would save bandwidth but complicate license situation.
+- **Non-Steam game support** — matches by name even when SteamOS doesn't have a canonical entry.
+
+## Gotchas
+
+- **Decky Loader API changes between versions.** The continuation fork exists partly because the upstream broke on Decky v3; every Decky major bump risks another fix cycle.
+- **YouTube scraping is fragile.** YouTube periodically tweaks its HTML/JS; the audio URL extraction breaks and has to be re-worked. Keep a fallback to `yt-dlp` on the backend if available.
+- **AudioLoader coupling.** If AudioLoader isn't installed or is an old version, theme music ducks system sound incorrectly. Plugin checks and warns.
+- **Game name disambiguation.** "Star Wars" matches dozens of theme songs; the plugin picks the top YouTube result, which isn't always right. Manual override via context menu is the escape valve.
+
+## See also
+
+- Reference memory: `C:\Users\RogerSquare\.claude\...\memory\project_gamethememusic.md` has session notes on the YouTube fixes applied in this fork
