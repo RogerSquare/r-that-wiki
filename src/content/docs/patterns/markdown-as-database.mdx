@@ -1,0 +1,101 @@
+---
+title: Markdown files as a database
+description: YAML frontmatter + markdown body + filesystem directory as a human-editable task store.
+---
+
+> **Source:** [atrium/backend/tasks/](https://github.com/RogerSquare/atrium/tree/main/backend/tasks) — data model ·  [atrium/backend/routes/tasks.js](https://github.com/RogerSquare/atrium/blob/main/backend/routes/tasks.js) — API surface
+> **Category:** Pattern — data modeling
+
+**Markdown-as-database** — store each record as a `.md` file with YAML frontmatter, use directories as categories, and let the filesystem be your indexing layer. Trades raw query power for human-editability and git-friendliness.
+
+## What it is
+
+Every entity is one file. Frontmatter carries structured fields; the body carries free-form content. Directory layout is meaningful — the parent folder is the record's "project" or category. The backend reads the directory tree into memory at startup, keeps an in-process cache, and writes individual files on update.
+
+## Why it exists
+
+**The problem:** A task board for AI-agent collaboration needs:
+1. Records that agents can read and modify via an API
+2. Records that a human can grep, diff, hand-edit, and git-track without running a DB client
+3. No migration overhead — the schema is just "what fields are in the YAML"
+
+Classic relational/NoSQL DBs solve (1) well but fight (2) and (3).
+
+**The fix:** files on disk. Each task is one `.md` file. YAML is the schema. Markdown is the body. The directory tree is the foreign-key-free category system.
+
+## File shape
+
+```markdown
+---
+id: feat-auth-001
+title: Implement JWT Login
+status: in_progress
+priority: high
+assignee: Agent-FE
+type: frontend
+tags: [react, jwt, api]
+files_affected: [src/components/Login.jsx, src/api/auth.js]
+created_at: '2026-04-12T06:00:00.000Z'
+started_at: '2026-04-12T06:05:00.000Z'
+activity_log:
+  - timestamp: '2026-04-12T06:00:00.000Z'
+    action: Task created by RogerSquare
+  - timestamp: '2026-04-12T06:05:00.000Z'
+    action: Status changed to IN PROGRESS by Agent-FE
+---
+### Description
+Implement the login form and token storage.
+
+- [x] Create UI Form
+- [ ] Connect to backend API
+
+### Comments
+- **[Agent-FE]**: Summary line.
+  - **Reasoning**: Why this approach.
+  - **Changes**: Code snippet.
+```
+
+## Read and write
+
+Read (on startup and on demand):
+
+```js
+const files = readdirSync(TASKS_DIR, { recursive: true }).filter(f => f.endsWith('.md'));
+const tasks = files.map(rel => {
+  const full = path.join(TASKS_DIR, rel);
+  const parsed = matter(readFileSync(full, 'utf8'));
+  return {
+    ...parsed.data,                 // YAML frontmatter
+    content: parsed.content,        // markdown body
+    project: path.dirname(rel),     // folder = project
+    filePath: full,
+  };
+});
+```
+
+Write (on PUT):
+
+```js
+const body = matter.stringify(content, frontmatter);
+fs.writeFileSync(filePath, body, 'utf8');
+io.emit('task_updated', taskId);   // notify connected clients
+```
+
+## How it's used
+
+- **Atrium** — tasks, chat history, project descriptions, service logs are all markdown-as-database
+- **Pattern generalizes** to any collaborative structured-content tool where humans want grep/diff access
+
+## Gotchas
+
+- **In-memory cache must invalidate on file change.** If you're editing tasks both through the API and by hand (in an editor), the API's cached view can drift. Either re-read on every request (cheap for thousands of records) or add an `fs.watch` to invalidate.
+- **YAML is annoying to generate safely.** Multi-line strings, escaped quotes, and unicode all have edge cases. Use a library (`gray-matter`, `js-yaml`) — don't hand-concat.
+- **Concurrent writes to the same file** can silently corrupt. For two-process scenarios, add a lockfile or queue writes through a single owner.
+- **No native queries.** Filtering, sorting, aggregating happens in application code against the full in-memory array. Fine up to ~10k records; expensive above that.
+- **File rename != content rename.** If the id is also the filename, renaming requires atomic move + re-index. Atrium sidesteps this by keeping id inside the frontmatter and naming files by id; folder-level rename is a plain directory `mv`.
+- **`.md` extension matters.** Some editors save backups as `.md.bak` or `.md~`. Filter by exact suffix or you'll accidentally parse editor backups as tasks.
+
+## See also
+
+- [projects/atrium](../../projects/atrium/) — where this is in use
+- [patterns/agent-task-board-protocol](../agent-task-board-protocol/) — the protocol that sits on top of these files

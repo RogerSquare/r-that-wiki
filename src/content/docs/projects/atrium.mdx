@@ -1,0 +1,90 @@
+---
+title: Atrium
+description: Self-hosted kanban task board designed for humans collaborating with AI agents.
+---
+
+> **Source:** [RogerSquare/atrium](https://github.com/RogerSquare/atrium) · Runs locally, not on a VPS
+> **Category:** Project tour
+
+**Atrium** — a kanban-style task management system built for autonomous AI developer agents. Humans get a visual control plane; agents pick up work through a REST API, update status as they go, and leave structured comments documenting their reasoning.
+
+## What it is
+
+A Node backend + React frontend that stores tasks as **markdown files with YAML frontmatter** on the local filesystem. Agents and humans interact through the same REST API; the task board UI renders the filesystem state in real time over socket.io.
+
+The board is **self-hosting** — this wiki entry exists because a task in the board said to write it.
+
+## Stack
+
+| Layer | Technology |
+|---|---|
+| Backend | Node 20+, Express 5, `pino` logging |
+| Frontend | React 19 + Vite, `@hello-pangea/dnd` for drag-drop |
+| Realtime | socket.io (server + client) |
+| Auth | JWT with bcrypt, persisted secret file |
+| Storage | Markdown files on disk, `gray-matter` for YAML parsing |
+| Dev tooling | Storybook, Vitest, Playwright |
+
+## Shape
+
+```
+atrium/
+├── backend/
+│   ├── server.js                     # Express entrypoint
+│   ├── routes/                       # tasks, projects, users, ai, design, services, ...
+│   ├── lib/                          # constants, logger, projectRegistry, swagger, ...
+│   ├── tasks/                        # THE data — see patterns/markdown-as-database
+│   │   ├── Atrium/<id>.md
+│   │   ├── Cairn/<id>.md
+│   │   ├── Artifex/<id>.md
+│   │   └── ...
+│   ├── projects.json                 # id → {name, folder} — see patterns/stable-project-ids
+│   ├── services.json                 # registered local services — see patterns/service-registry-control-plane
+│   └── users.json / chat/ / trash/
+├── frontend/
+│   └── src/
+│       ├── App.jsx
+│       ├── components/               # Board, TaskCard, TaskModal, Sidebar, Settings, ...
+│       ├── hooks/useTasks.js         # central state + socket subscription
+│       └── contexts/AuthContext.jsx
+├── CLAUDE.md                         # protocol for AI agents — see patterns/agent-task-board-protocol
+├── README.md
+└── start.bat                         # starts both services in new windows
+```
+
+## Ports
+
+| Service | Port |
+|---|---|
+| Backend (Express) | `3001` |
+| Frontend (Vite dev) | `5173` |
+| Storybook (if running) | `6006` |
+
+Nothing on a VPS — Atrium is local-only. The tasks it tracks are about projects that may deploy elsewhere, but Atrium itself doesn't.
+
+## How agents interact
+
+The backend exposes a typical REST surface:
+
+- `GET /api/tasks?project_id=atb` — list tasks
+- `POST /api/tasks` — create
+- `PUT /api/tasks/:id` — update (status, assignee, content, etc.)
+
+Agents follow the protocol in [CLAUDE.md](https://github.com/RogerSquare/atrium/blob/main/CLAUDE.md) — use the API, don't edit markdown directly, stop at `review` for human approval. See [patterns/agent-task-board-protocol](../../patterns/agent-task-board-protocol/).
+
+## How services are controlled
+
+Any local service registered in `backend/services.json` (id, port, cwd, startCmd) can be started, stopped, restarted, and tailed from the Atrium UI. The backend spawns child processes, tracks pids, and captures stdout/stderr. See [patterns/service-registry-control-plane](../../patterns/service-registry-control-plane/).
+
+## Non-obvious design choices
+
+- **Markdown files, not a database.** Every task is a standalone `.md` file. Git can track them, humans can hand-edit them in an emergency, and agents write to them through the API so the activity log stays consistent. See [patterns/markdown-as-database](../../patterns/markdown-as-database/).
+- **Project IDs stay stable across renames.** `projects.json` separates id (`atb`, `portfolio`) from display name and folder. Renaming a project doesn't break anything that references the id. See [patterns/stable-project-ids](../../patterns/stable-project-ids/).
+- **Four statuses, no more.** `todo` → `in_progress` → `review` → `done`. Agents may only move to `review`; only humans promote to `done`. Prevents "it shipped to itself" loops.
+
+## Gotchas
+
+- **No hot-reload on the backend.** `node server.js` — no nodemon. Restart the `task-board-be` service after backend changes.
+- **Tasks dir is gitignored** (`backend/tasks/**/*.md` in `.gitignore`). That's intentional — the tasks are personal/project-specific data, not source. Don't commit them.
+- **`CLAUDE.md` is load-bearing.** The file tells Claude how to behave inside the board. Edits to it change agent behavior globally. Treat it like a config file, not documentation.
+- **Concurrent writes to the same task** can clobber activity log entries. Unlikely with one human and one agent; becomes relevant if multiple agents run in parallel.

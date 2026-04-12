@@ -1,0 +1,90 @@
+---
+title: Service registry control plane (services.json)
+description: One JSON file + a small supervisor = start/stop/restart all your local services from one UI.
+---
+
+> **Source:** [atrium/backend/services.json](https://github.com/RogerSquare/atrium/blob/main/backend/services.json) · [atrium/backend/routes/services.js](https://github.com/RogerSquare/atrium/blob/main/backend/routes/services.js)
+> **Category:** Pattern — local ops
+
+**Service registry control plane** — keep a list of your local projects as structured records (id, port, cwd, startCmd), and build a small supervisor UI around it. One dashboard, one command per service, no typing paths into a dozen terminals.
+
+## What it is
+
+A plain JSON file registers each service. A thin backend reads it, exposes API endpoints to start/stop/restart by id, spawns child processes with the right cwd and env, tracks pids, captures stdout/stderr for tailing. A UI renders each service as a card with live status and log output.
+
+## Why it exists
+
+**The problem:** Running several local projects at once means:
+1. Multiple terminal windows, each `cd`'d somewhere different
+2. Remembering which port which service listens on
+3. Remembering exact start commands (`node server.js` vs. `npm run dev` vs. `npx vite --port X`)
+4. Restarting services manually after pulling changes
+5. Forgetting which ones are running when you close the laptop
+
+**The fix:** all that goes in `services.json`. A small supervisor makes running them repeatable and UI-driven.
+
+## Registry shape
+
+```json
+[
+  {
+    "id": "task-board-be",
+    "name": "Atrium Backend",
+    "group": "Atrium",
+    "port": 3001,
+    "cwd": "C:\\Users\\RogerSquare\\Documents\\opencode\\atrium\\backend",
+    "startCmd": "npm start"
+  },
+  {
+    "id": "artifex-frontend",
+    "name": "Artifex Frontend",
+    "group": "Artifex",
+    "port": 5175,
+    "cwd": "C:\\Users\\RogerSquare\\Documents\\opencode\\artifex\\frontend",
+    "startCmd": "node node_modules/vite/bin/vite.js --host --port 5175",
+    "depends_on": [],
+    "preview": true
+  }
+]
+```
+
+Key fields:
+
+- **`id`** — stable short identifier, used in API calls
+- **`group`** — UI groups services by this (e.g. all Atrium services together)
+- **`port`** — the port the service binds; used for conflict detection and "open in browser" buttons
+- **`cwd`** — where to launch from; must be absolute
+- **`startCmd`** — the exact shell command, verbatim
+- **`depends_on`** *(optional)* — start these first
+- **`preview`** *(optional)* — show an embedded-browser preview in the UI
+
+## API surface
+
+- `POST /api/services/:id/start` — spawn with cwd + shell(startCmd), record pid
+- `POST /api/services/:id/stop` — SIGTERM the tracked pid
+- `POST /api/services/:id/restart` — stop then start
+- `GET /api/services/:id/logs?n=200` — tail captured stdout/stderr
+- `GET /api/services` — full list with live status
+
+## Non-obvious behavior
+
+- **Status is derived from pid + port check.** A tracked pid with a listening port = running. Everything else is stopped.
+- **Orphaned processes** (something else holds the port) show as "external" — the UI can't control them but at least flags the conflict.
+- **Log capture** uses a rotating buffer per service, in memory. Simple; bounded; lost on restart.
+
+## How it's used
+
+- **Atrium** — running on localhost manages all the other services (Artifex backend, Memos clone, Kaleidoscope, …)
+- **Pattern generalizes** to any multi-project local dev setup where you want one pane of glass
+
+## Gotchas
+
+- **`startCmd` must not daemonize.** If the command forks and exits (e.g. `pm2 start ...`), the supervisor loses the pid. Run the server directly in the foreground.
+- **Windows paths in JSON** require double-escaped backslashes (`C:\\Users\\...`). Forward slashes also work on modern Node — use whichever reads cleaner.
+- **`npm start` wraps everything in `npm` itself.** Stopping by pid kills `npm`, not necessarily the child Node process. Tree-kill or spawn Node directly.
+- **Port conflicts.** Two services registered on the same port will both "start" — one will fail silently. Add a port-availability check before starting.
+- **Bypassing the registry breaks it.** If you `cd somewhere && node server.js` in a terminal, the supervisor doesn't know about it, and its status shows "stopped" even though the port is taken. Discipline required — only start services through the UI or API.
+
+## See also
+
+- [projects/atrium](../../projects/atrium/) — the supervisor in practice

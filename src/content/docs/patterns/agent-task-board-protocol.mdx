@@ -1,0 +1,89 @@
+---
+title: Agent task board protocol
+description: The convention that lets humans and AI agents share one kanban without stepping on each other.
+---
+
+> **Source:** [atrium/CLAUDE.md](https://github.com/RogerSquare/atrium/blob/main/CLAUDE.md) — the actual protocol document
+> **Category:** Pattern — AI-human collaboration
+
+**Agent task board protocol** — a small set of hard rules, codified in a `CLAUDE.md` file at the repo root, that tells every AI agent how to interact with a shared task board without corrupting it or stepping on the human.
+
+## What it is
+
+A written contract between humans and agents, enforced by convention (not code). Lives at the top level of the board's repo. Agents reading the repo auto-pick it up and follow it. Humans occasionally update it when new rules are needed.
+
+## Why it exists
+
+**The problem:** Multiple agents (and a human) all want to write to the same task board. Without a protocol:
+1. Agents edit markdown files directly, breaking the API's activity log
+2. Agents mark tasks `done` themselves, skipping human review
+3. Two agents claim the same task simultaneously
+4. An agent invents a new status like `"completed"` that the UI doesn't render
+5. Comments drift into inconsistent shapes, making the history un-skimmable
+
+**The fix:** a short, strict document with non-negotiable rules. Agents follow it because they're instructed to read it; humans enforce it when they review.
+
+## Rule categories
+
+### 1. Lifecycle
+
+- **Statuses** (exactly four, no others): `todo` → `in_progress` → `review` → `done`
+- Agents may move a task to `review` and no further. **Only the human promotes to `done`.**
+- Any non-canonical status (`completed`, `finished`, `archived`) causes the task to vanish from the board. Never use them.
+
+### 2. API, not file edits
+
+- All mutations go through the REST API (`PUT /api/tasks/:id`).
+- The backend injects timestamps, maintains the `activity_log`, and broadcasts socket events. Direct file edits bypass all three.
+- Exception: emergency fixes. Documented, with activity_log entries appended manually.
+
+### 3. Task creation
+
+- Every task needs a human-readable id: `{category}-{descriptor}-{number}` (e.g. `feat-auth-001`).
+- Category prefixes: `feat-`, `bug-`, `comp-`, `ui-`, `opt-`, `devops-`, `mobile-`.
+- Search for duplicates before creating. Similar scope → update the existing task, don't fork.
+
+### 4. Comment format
+
+Nested bullet structure, consistent across every agent:
+
+```markdown
+- **[Agent]**: High-level summary in plain English (1-2 sentences).
+  - **Reasoning**: Brief justification of *why* this approach.
+  - **Changes**:
+    ```<lang>
+    // concise snippet of the most important change
+    ```
+```
+
+Two-space indentation for the Reasoning and Changes sub-bullets — required for correct nesting in the renderer.
+
+### 5. Pre-review checklist
+
+Before moving a task to `review`, the agent runs and reports on:
+
+- **Testing** — existing tests pass, new behavior tested
+- **Security** — auth on new endpoints, input validated, no stack traces leaked
+- **Mobile** — viewport 375px, 44px touch targets
+- **Cleanup** — all delete/cleanup paths updated if new fields added
+- **Lint** — `npm run lint` clean
+
+Not every task needs every check — use judgment. But mark intentional skips.
+
+## How it's used
+
+- **Atrium** — every session with an agent starts by reading this file
+- **Pattern generalizes** to any shared editable surface (code review bots, doc-writing agents, PR auto-triage)
+
+## Gotchas
+
+- **Rules rot if they don't match reality.** Protocol drift is lethal — agents keep following an outdated rule, humans stop caring about enforcement, the file becomes decoration. Review it quarterly against actual behavior.
+- **Too many rules = agents ignore the file.** Cap it around two screens. If a rule is "nice to have", leave it out.
+- **Protocol ≠ code.** Agents follow it because they're told to. A malicious or buggy agent can still trample everything. The API should also validate what it can (e.g. reject invalid statuses at the endpoint).
+- **`{agent_name}` identification is social trust only.** The backend doesn't verify that a PUT really came from "Agent-FE". For a multi-tenant board, add API tokens and an author field bound to the token.
+- **Comments as structured data.** The nested-bullet format isn't just cosmetic — downstream tooling (summaries, dashboards) parses it. Break the format and break the tooling silently.
+
+## See also
+
+- [projects/atrium](../../projects/atrium/) — where this protocol is in force
+- [patterns/markdown-as-database](../markdown-as-database/) — the substrate the protocol protects
