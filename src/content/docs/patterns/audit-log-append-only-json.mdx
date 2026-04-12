@@ -1,0 +1,78 @@
+---
+title: Append-only JSON audit log
+description: A rolling JSON file to remember what mutating actions your service performed. Cheap, readable, enough.
+---
+
+> **Source:** [gh-collab-manager](../../projects/gh-collab-manager/) — `audit.json`, 500-entry rolling buffer
+> **Category:** Pattern — observability
+
+**Append-only JSON audit log** — a single file at the root of your service that records every mutating action it performed, in reverse-chronological order, capped at some maximum. Not cryptographic, not tamper-proof, not a substitute for real logging infra — just "what did I do recently, and when."
+
+## What it is
+
+One JSON file on disk (`audit.json`, `.audit.json`, whatever). An array of entries, each with at minimum `timestamp`, `action`, and `details`. Every mutating request prepends an entry. When the array exceeds a max size, the oldest entries fall off. Reads return the raw array or filtered slices.
+
+## Why it exists
+
+**The problem:** You wrote a tool that does stuff on your behalf (adds GitHub collaborators, starts services, deletes files). Months later, "wait — did I do that?" has no answer. Options:
+
+1. **Real observability stack** (Loki, OpenTelemetry, Grafana) — massive overkill for a personal tool.
+2. **Rotating log file** (`pino` + logrotate) — better than nothing, but records everything including noise.
+3. **Audit trail in a database table** — requires a DB.
+
+**The fix:** a 30-line JSON-file logger. Records only the actions that mattered (mutations, not reads). Max-500 rows keeps the file tiny. `jq` reads it in 0.01 s.
+
+## Shape
+
+```js
+const fs = require('fs');
+const path = require('path');
+
+const AUDIT_FILE = path.join(__dirname, 'audit.json');
+const MAX_AUDIT_ENTRIES = 500;
+
+function auditLog(action, details) {
+  let entries = [];
+  try {
+    if (fs.existsSync(AUDIT_FILE)) {
+      entries = JSON.parse(fs.readFileSync(AUDIT_FILE, 'utf8'));
+    }
+  } catch { /* corrupt or missing — start fresh */ }
+  entries.unshift({
+    timestamp: new Date().toISOString(),
+    action,
+    details,
+  });
+  if (entries.length > MAX_AUDIT_ENTRIES) entries.length = MAX_AUDIT_ENTRIES;
+  fs.writeFileSync(AUDIT_FILE, JSON.stringify(entries, null, 2));
+}
+```
+
+Call it at every mutating route:
+
+```js
+app.post('/api/repos/:owner/:repo/collaborators', async (req, res) => {
+  await gh(['api', `repos/${req.params.owner}/${req.params.repo}/collaborators/${req.body.username}`, '-X', 'PUT']);
+  auditLog('collaborator.add', { repo: `${req.params.owner}/${req.params.repo}`, username: req.body.username });
+  res.sendStatus(204);
+});
+```
+
+## How it's used
+
+- **gh-collab-manager** — records collaborator add/remove, invitation cancellations, coauthor removals, repo resets
+- **Pattern generalizes** — any small service where "what happened lately" is a real question
+
+## Gotchas
+
+- **Race conditions on concurrent writes.** Read-modify-write is not atomic in Node. For single-user admin tools, the risk is basically zero. For anything concurrent, swap for append-line (JSONL) format so each entry is one atomic write.
+- **File size isn't truly bounded.** Max-500 entries works only if individual entries are small. One verbose `details` payload with a full HTTP response dumped into it can blow that assumption. Cap or summarize `details` at write time.
+- **JSON array format requires re-writing the whole file.** At 500 entries this is imperceptible. At 500,000 it's not. If you need more history, switch to JSONL (one entry per line, append with `fs.appendFile`, read with line split).
+- **Not tamper-proof.** The same process writing the file can rewrite it. Anyone with filesystem access can doctor it. Fine for memory-aid; not fine for compliance.
+- **Keep audit schema stable.** Adding fields later is safe; renaming or reordering breaks older readers. Entries are frozen records — treat them like event data.
+- **Don't log sensitive payloads.** If your mutation includes a password reset, don't dump the new password into `details`. Redact at write time.
+
+## See also
+
+- [projects/gh-collab-manager](../../projects/gh-collab-manager/) — running instance of this pattern
+- [patterns/gh-cli-as-backend](../gh-cli-as-backend/) — the kind of mutation surface this audit log tracks

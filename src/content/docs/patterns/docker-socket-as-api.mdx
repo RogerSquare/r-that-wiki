@@ -1,0 +1,73 @@
+---
+title: Docker socket as API
+description: Mount the Docker daemon's Unix socket into your app container, talk to Docker over HTTP.
+---
+
+> **Source:** [dockview](../../projects/dockview/) — reads container state, executes lifecycle commands
+> **Category:** Pattern — homelab ops
+
+**Docker socket as API** — the Docker daemon exposes a full HTTP API over `/var/run/docker.sock`. Mount the socket into your container and anything you can do with `docker` CLI, your app can do over HTTP.
+
+## What it is
+
+Bind-mount `/var/run/docker.sock` into your app container (`-v /var/run/docker.sock:/var/run/docker.sock:ro` for read-only, no `:ro` for full control). Use `dockerode` (Node), `docker-py` (Python), or just raw HTTP — the socket speaks standard Docker Engine API.
+
+Your app now has remote-control over the host's Docker. Start, stop, stream logs, list images, inspect networks, watch events.
+
+## Why it exists
+
+**The problem:** Building homelab / devops tooling usually means either:
+1. **Shelling out to `docker` CLI** — works, but every call is a subprocess spawn and parsing human-readable output.
+2. **Running your tool on the host directly** — breaks containerized deployment.
+3. **An external orchestrator** (Portainer, k8s) — heavy for a single-machine homelab.
+
+**The fix:** your app runs as a container like everything else; mounting the socket gives it the same capabilities `docker` CLI has, but over a proper API with structured responses, event streams, and stat fetching.
+
+## Shape
+
+```yaml
+# docker-compose.yml
+services:
+  my-control-panel:
+    image: my-control-panel:latest
+    ports: ["8080:3000"]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    restart: unless-stopped
+```
+
+Node with `dockerode`:
+
+```js
+const Docker = require('dockerode');
+const docker = new Docker();  // auto-detects /var/run/docker.sock
+
+const containers = await docker.listContainers({ all: true });
+const container = docker.getContainer(id);
+await container.restart();
+
+// Live event stream:
+docker.getEvents({}, (err, stream) => {
+  stream.on('data', chunk => console.log(JSON.parse(chunk.toString())));
+});
+```
+
+## How it's used
+
+- **dockview** — lists containers, starts/stops them, tails logs, renders live via Socket.IO
+- **Pattern generalizes** — any personal dashboard, monitoring tool, backup orchestrator, etc. that needs to know or change Docker state
+
+## Gotchas
+
+- **Mounting the socket is privileged access.** Any code inside that container can control the entire Docker daemon: start privileged containers, mount host filesystems, spawn root shells. **Treat the container as trusted** and don't expose it to untrusted networks.
+- **Read-only mount is a real defense** for read-only tools (dashboards, monitoring). The daemon rejects write operations when the socket is opened read-only. Use it whenever possible.
+- **Host metrics ≠ container metrics.** `systeminformation` and similar libraries read `/proc` and `/sys` from wherever they're running. Inside a container, those reflect the container, not the host. Either mount `/proc:/host-proc:ro` and configure the library, or run the metrics collector on the host.
+- **Socket permission quirks.** On some distros the socket is owned by `docker` group. Your container's user needs access — either run as root (yuck) or match the group GID.
+- **Windows / macOS / rootless Docker** use different paths (`\\.\pipe\docker_engine`, `~/.docker/run/docker.sock`). `dockerode`'s auto-detect handles common cases; document the override for everyone else.
+- **Event streams reconnect.** The daemon can restart (upgrades, crashes). Your app's event listener needs retry logic, or it goes deaf silently.
+- **Don't run destructive operations without confirmation.** The socket gives you `docker rm -f` and `docker system prune` over HTTP. Accidentally wiring a UI button to those with no confirm has ruined weekends.
+
+## See also
+
+- [projects/dockview](../../projects/dockview/) — running homelab dashboard using this pattern
+- [patterns/service-registry-control-plane](../service-registry-control-plane/) — analogous pattern for non-Docker local services

@@ -1,0 +1,86 @@
+---
+title: SQLite-backed job queue
+description: Background work for small systems with no Redis, no BullMQ, no new infra.
+---
+
+> **Source:** [Artifex](../../projects/artifex/) — ML jobs (tag, caption, NSFW) queued through SQLite
+> **Category:** Pattern — background work
+
+**SQLite-backed job queue** — a `jobs` table in the same SQLite file as your app data. A poller claims rows and processes them. No external queue service, no Redis dependency, no migration to BullMQ until volume actually demands it.
+
+## What it is
+
+One table (`id`, `type`, `payload`, `status`, `attempts`, timestamps). One worker loop that polls every N seconds, `UPDATE ... WHERE status='pending' LIMIT 1 RETURNING ...` to atomically claim a job, runs the handler, marks `done` or `failed`. That's the whole queue.
+
+## Why it exists
+
+**The problem:** Small self-hosted apps need background work — ML inference, email send, thumbnail generation, federation sync. The usual answers:
+
+1. **Redis + BullMQ / Bee-Queue** — another service, another dependency, another thing to remember on a fresh install.
+2. **`setImmediate` / in-process timers** — lost on restart, no retry, no visibility.
+3. **A proper worker service** — overkill for single-machine deployments.
+
+**The fix:** use what you already have. If SQLite is your DB, it's also your queue. Reliability guarantees are good enough for < 10 req/s workloads on one host, which covers most self-hosted projects.
+
+## Minimal schema
+
+```sql
+CREATE TABLE jobs (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  type       TEXT    NOT NULL,       -- 'tag' | 'caption' | ...
+  payload    TEXT    NOT NULL,       -- JSON
+  status     TEXT    NOT NULL DEFAULT 'pending',
+  attempts   INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT,
+  created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+  updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+);
+CREATE INDEX idx_jobs_status_created ON jobs(status, created_at);
+```
+
+## Claim-and-run loop
+
+```js
+function runOnce() {
+  const job = db.prepare(`
+    UPDATE jobs SET status='running', attempts=attempts+1, updated_at=unixepoch()
+    WHERE id = (
+      SELECT id FROM jobs WHERE status='pending' ORDER BY id LIMIT 1
+    )
+    RETURNING *
+  `).get();
+  if (!job) return;
+
+  try {
+    await handlers[job.type](JSON.parse(job.payload));
+    db.prepare(`UPDATE jobs SET status='done', updated_at=unixepoch() WHERE id=?`).run(job.id);
+  } catch (err) {
+    const status = job.attempts >= MAX_RETRIES ? 'failed' : 'pending';
+    db.prepare(`UPDATE jobs SET status=?, last_error=?, updated_at=unixepoch() WHERE id=?`)
+      .run(status, err.message, job.id);
+  }
+}
+
+setInterval(runOnce, 3000);
+```
+
+Single concurrency by default. For parallelism, run multiple workers — SQLite's `UPDATE ... RETURNING` is atomic, so each worker gets a distinct row.
+
+## How it's used
+
+- **Artifex** — every uploaded image enqueues three jobs (tag, caption, NSFW); workers pull and execute them asynchronously
+- **Pattern generalizes** — any self-hosted app with async work and a SQLite DB
+
+## Gotchas
+
+- **Don't run the poller and long-running handlers in the same SQLite transaction.** Locks. Claim in one transaction; process in application code; update status in a second transaction.
+- **`better-sqlite3` is synchronous.** The poller itself is fine synchronously, but the *handler* is usually async (HTTP to an ML server, filesystem work). Don't mix.
+- **Startup cleanup.** Jobs stuck in `running` after a crash never finish. On boot, reset any `running` rows to `pending` (or `failed` if you want human review).
+- **No priority, no scheduling** out of the box. If you need either, add columns (`priority`, `run_after`) and change the claim query.
+- **Polling wastes CPU when idle.** For low-traffic systems 3-5 s is fine. For truly bursty work, add `LISTEN/NOTIFY` — SQLite doesn't have it, but you can simulate with a shared pipe or just bump to a shorter poll.
+- **Failed-job visibility matters.** Expose `GET /api/admin/jobs?status=failed` so someone notices when uploads stop processing. Otherwise the queue silently grows.
+
+## See also
+
+- [projects/artifex](../../projects/artifex/) — running instance
+- [patterns/python-ml-subprocess](../python-ml-subprocess/) — what Artifex's workers dispatch to

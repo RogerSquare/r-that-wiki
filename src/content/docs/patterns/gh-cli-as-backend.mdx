@@ -1,0 +1,67 @@
+---
+title: "`gh` CLI as backend for GitHub tooling"
+description: "Shell out to `gh` instead of using Octokit — inherit auth, pagination, and rate-limit handling for free."
+---
+
+> **Source:** [gh-collab-manager](../../projects/gh-collab-manager/) · [atrium/ai-claude-session-dispatch]
+> **Category:** Pattern — GitHub integration
+
+**`gh` as backend** — when you're writing a personal GitHub tool, skip Octokit. Spawn the `gh` CLI from your Node process. `gh` already handles your token, pagination, retries, rate limiting, and API version drift.
+
+## What it is
+
+Instead of importing `@octokit/rest`, building an auth flow, and writing fetch-and-paginate boilerplate, use `execFile('gh', [...args])`. Parse the JSON output. Done. The binary running on the server is the same CLI you use from your terminal.
+
+## Why it exists
+
+**The problem:** Every GitHub-integrated tool you write needs:
+1. A token (how — env var? OAuth? device flow?)
+2. Pagination (every list endpoint has it)
+3. Rate limit handling (secondary limits aren't fun)
+4. API version tracking (REST vs. GraphQL; v3 vs. v4 deprecations)
+
+`gh` already solves all of these. Reusing it costs one subprocess and zero auth code.
+
+**The fix:** shell out. For personal tools this is strictly better than reimplementing what `gh` already does.
+
+## Shape
+
+```js
+const { execFile } = require('child_process');
+const { promisify } = require('util');
+const execFileAsync = promisify(execFile);
+
+async function gh(args) {
+  const { stdout } = await execFileAsync('gh', args, { maxBuffer: 10 * 1024 * 1024 });
+  try { return JSON.parse(stdout); } catch { return stdout; }
+}
+
+// List repos:
+const repos = await gh(['repo', 'list', '--json', 'name,owner,visibility', '--limit', '200']);
+
+// Add collaborator:
+await gh(['api', `repos/${owner}/${repo}/collaborators/${user}`, '-X', 'PUT', '-f', 'permission=push']);
+```
+
+Use `execFile` (args as array) — **never** `exec` (args as a shell string). The former is injection-safe for dynamic repo names, usernames, and branch names.
+
+## How it's used
+
+- **gh-collab-manager** — every GitHub operation (list repos, manage collaborators, handle invitations, check contributors, metadata, repo reset) goes through `gh`
+- **Pattern generalizes** — any personal GitHub tool that runs on a machine where `gh auth login` has happened
+
+## Gotchas
+
+- **`gh` must be installed and authenticated.** Your service's operator needs `gh auth login` on the host running your server. If you move the service to a new host, redo auth there.
+- **`execFile`, not `exec`.** `exec` passes through a shell and opens you up to command injection on any user-controlled string. `execFile` passes args as an array directly to the binary — no shell involved.
+- **Error handling is via exit code + stderr.** `execFile` rejects on non-zero exit; check `err.stderr` for the `gh` error message.
+- **Rate limits are `gh`'s problem until they're not.** `gh` handles primary rate limits, but secondary rate limits (abuse detection) can still bite. Don't burst-fire hundreds of operations without a backoff.
+- **Don't use this for third-party consumers.** If your service will be used by people who aren't you (or your own servers), proper OAuth + Octokit is better — you don't want to be shipping a `gh`-binary dependency to every user.
+- **`gh api` is the escape hatch.** Any GitHub endpoint `gh` doesn't have a first-class command for can still be reached with `gh api ...` — use it for everything. Full REST + GraphQL coverage.
+- **Output format varies by subcommand.** Some subcommands default to human-readable; use `--json` and an explicit field list to get stable machine-parseable output.
+- **No streaming.** `gh` emits JSON when the whole command completes. Long-running operations buffer in memory. For paginated commands, use `gh api --paginate ...`.
+
+## See also
+
+- [projects/gh-collab-manager](../../projects/gh-collab-manager/) — running instance
+- [patterns/audit-log-append-only-json](../audit-log-append-only-json/) — what gh-collab-manager uses to track which `gh` operations have been run

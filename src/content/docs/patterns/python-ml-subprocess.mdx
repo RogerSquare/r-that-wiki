@@ -1,0 +1,85 @@
+---
+title: Python ML subprocess with loopback HTTP
+description: Keep ML models in Python, app logic in Node. Talk over localhost HTTP.
+---
+
+> **Source:** [Artifex](../../projects/artifex/) — WD Tagger on `:7865`, BLIP on `:7866`
+> **Category:** Pattern — ML integration
+
+**Python ML subprocess** — run each ML model as its own Python HTTP server on a loopback port, keep the rest of your app in whatever stack you prefer, and cross the language boundary with JSON over `localhost`.
+
+## What it is
+
+Each model gets a tiny Python wrapper that loads it once, exposes one or two endpoints over Flask/FastAPI, and binds to `127.0.0.1:<port>`. The main app calls it like any other REST API. No native Node bindings, no PyO3, no tRPC over stdin/stdout.
+
+## Why it exists
+
+**The problem:** ML ecosystems are overwhelmingly Python. Most app-server code is not. Options for the boundary:
+
+1. **Rewrite the model in JS** — slow, wrong, and fights the whole ecosystem.
+2. **Native bindings / ONNX** — works, but every new model opset or version bump becomes a build problem.
+3. **Subprocess over stdin/stdout** — cheap but flaky; serialization is ad-hoc.
+4. **HTTP over loopback** — well-understood protocol, cheap cost, decouples the lifecycles.
+
+**The fix:** (4). The ML server stays in Python and owns its own dependencies. The app server stays in its lane. You can restart one without the other. Swapping models is an endpoint change, not a rebuild.
+
+## Shape
+
+```
+your-app/
+├── backend/                       # Node/Express app
+│   └── ml-client.js               # thin wrapper: fetch http://localhost:7865/tag
+└── ml/
+    ├── tagger/
+    │   ├── server.py              # Flask + model load once
+    │   └── requirements.txt
+    └── captioner/
+        ├── server.py
+        └── requirements.txt
+```
+
+Python server is a few dozen lines:
+
+```python
+# ml/tagger/server.py
+from flask import Flask, request, jsonify
+from model import Tagger  # your model wrapper
+
+app = Flask(__name__)
+tagger = Tagger.load()  # expensive; happens once
+
+@app.post("/tag")
+def tag():
+    image = request.files["image"].read()
+    tags = tagger.predict(image)
+    return jsonify(tags=tags)
+
+if __name__ == "__main__":
+    app.run(host="127.0.0.1", port=7865)
+```
+
+Node side is just `fetch`:
+
+```js
+const res = await fetch('http://localhost:7865/tag', { method: 'POST', body: form });
+const { tags } = await res.json();
+```
+
+## How it's used
+
+- **Artifex** — WD Tagger and BLIP Captioner each run as their own subprocess; Node queue dispatches jobs to them
+- **Pattern generalizes** — any app with ML models in Python and everything else in another language
+
+## Gotchas
+
+- **Bind to `127.0.0.1`, not `0.0.0.0`.** A model server exposed on the LAN is an unauthenticated inference endpoint. Anyone inside your network can hammer it.
+- **The ML servers aren't managed by the app.** Crash → uploads stall silently in the queue. Add a health check and visible status in the UI, or supervise them with systemd / `pm2` / a [service registry control plane](../service-registry-control-plane/).
+- **Model load time is not zero.** The first request after boot can take many seconds. Warm up on startup with a dummy payload if latency matters.
+- **Concurrency is model-dependent.** Some models can batch, some can't. Don't let multiple app workers race a single-concurrency model server — put a queue in front.
+- **Serialization costs add up.** Large images roundtrip as multipart or base64. For high volume consider sharing a temp file path instead of the bytes.
+- **Version mismatch between model weights and server code** fails silently — e.g. WD Tagger opset updates that the inference server doesn't support. Pin versions in `requirements.txt`, test before deploying.
+
+## See also
+
+- [projects/artifex](../../projects/artifex/) — where this pattern is in use
+- [patterns/sqlite-job-queue](../sqlite-job-queue/) — the queue that feeds the ML subprocesses
