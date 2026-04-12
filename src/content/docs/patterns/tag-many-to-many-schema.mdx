@@ -1,0 +1,112 @@
+---
+title: Tag many-to-many schema in SQLite
+description: Three tables — items, tags, item_tags. Indexes matter. The difference between a fast "show me tagged items" query and a slow one.
+---
+
+> **Source:** [markstack/src/db/schema.sql](https://github.com/RogerSquare/markstack)
+> **Category:** Pattern — data modeling
+
+**Tag many-to-many schema** — the two-entity relation: items have many tags, tags belong to many items. The classic junction-table pattern. What matters: which column is the FK, which direction the queries go, and which indexes keep them cheap.
+
+## Shape
+
+```sql
+-- Items being tagged
+CREATE TABLE bookmarks (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  url         TEXT NOT NULL,
+  title       TEXT,
+  created_at  INTEGER NOT NULL DEFAULT (unixepoch())
+);
+
+-- Tags themselves (interned)
+CREATE TABLE tags (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  name        TEXT NOT NULL UNIQUE COLLATE NOCASE
+);
+
+-- The junction
+CREATE TABLE bookmark_tags (
+  bookmark_id INTEGER NOT NULL REFERENCES bookmarks(id) ON DELETE CASCADE,
+  tag_id      INTEGER NOT NULL REFERENCES tags(id)      ON DELETE CASCADE,
+  PRIMARY KEY (bookmark_id, tag_id)
+);
+
+-- The reverse-direction index (critical)
+CREATE INDEX idx_bookmark_tags_tag ON bookmark_tags(tag_id, bookmark_id);
+```
+
+## Why these specific indexes
+
+The `PRIMARY KEY (bookmark_id, tag_id)` gives you an index on `(bookmark_id, tag_id)` for free. That's fast for "what tags does this bookmark have".
+
+The explicit `idx_bookmark_tags_tag` on `(tag_id, bookmark_id)` is fast for the *other* direction: "what bookmarks have this tag". Without it, filtering by tag scans the whole junction table.
+
+Both directions need an index. Missing either is a performance cliff at a few thousand rows.
+
+## Core queries
+
+**Tags for a bookmark**:
+```sql
+SELECT t.name FROM tags t
+JOIN bookmark_tags bt ON bt.tag_id = t.id
+WHERE bt.bookmark_id = :id;
+```
+
+**Bookmarks with a tag**:
+```sql
+SELECT b.* FROM bookmarks b
+JOIN bookmark_tags bt ON bt.bookmark_id = b.id
+JOIN tags t ON t.id = bt.tag_id
+WHERE t.name = :tag COLLATE NOCASE
+ORDER BY b.created_at DESC
+LIMIT 25;
+```
+
+**Bookmarks with ALL of these tags** (intersection):
+```sql
+SELECT b.* FROM bookmarks b
+WHERE b.id IN (
+  SELECT bt.bookmark_id FROM bookmark_tags bt
+  JOIN tags t ON t.id = bt.tag_id
+  WHERE t.name IN ('react', 'auth', 'jwt')
+  GROUP BY bt.bookmark_id
+  HAVING COUNT(DISTINCT t.name) = 3
+);
+```
+
+## Adding tags to a bookmark
+
+```sql
+-- Insert tag if new
+INSERT OR IGNORE INTO tags(name) VALUES (:name);
+
+-- Link
+INSERT OR IGNORE INTO bookmark_tags(bookmark_id, tag_id)
+  VALUES (:bookmark_id, (SELECT id FROM tags WHERE name = :name));
+```
+
+`INSERT OR IGNORE` handles the race: two inserts of the same `(bookmark, tag)` pair don't error, just do nothing.
+
+## How it's used
+
+- **markstack** — the bookmark-tag relationship
+- **Artifex** — analogous `image_tags` table with additional fields (status, confidence, source)
+- **Atrium** — tasks have tags stored inline in YAML (different model; no junction table)
+
+## Gotchas
+
+- **`COLLATE NOCASE` on tag names.** Users type `React`, `react`, `REACT`. Without case-insensitive collation, you get three separate tag rows.
+- **`UNIQUE` on tag name.** Without it, you can accidentally insert `react` twice. `INSERT OR IGNORE` depends on the UNIQUE constraint to no-op.
+- **`ON DELETE CASCADE` on the junction.** Without it, deleting a bookmark leaves orphaned rows in `bookmark_tags` that point to nothing. SQLite supports CASCADE if you `PRAGMA foreign_keys = ON` at connection time.
+- **Tag deletion is a choice.** When a bookmark is deleted and that was the last use of tag "obscure-framework", should the tag row stay or go? Usually keep it — tag autocomplete uses the tag table; a just-deleted bookmark might be a typo.
+- **Tag rename.** Renaming a tag means updating `tags.name`. The junction rows follow (they reference `tag_id`, not name). Update the unique index if the new name would collide.
+- **Intersection vs union.** "Tagged with react OR jwt" is simpler (`WHERE name IN (...)`); "tagged with react AND jwt" needs the `GROUP BY ... HAVING` trick. Pick based on what the UI means by the operator.
+- **Tag count denormalization.** "How many bookmarks is this tag on" is common. Cache the count on `tags` or compute via `SELECT COUNT(*)`. Cache wins for hot-path queries; compute wins for freshness.
+- **Name length.** Cap tag names at 50 chars or so. Otherwise users inadvertently paste full sentences.
+- **FTS on tag names.** If you want "tags starting with ema..." autocomplete, indexing tag names for LIKE `ema%` is cheap. Full FTS5 is overkill for tag names.
+
+## See also
+
+- [projects/markstack](../../projects/markstack/)
+- [patterns/sqlite-fts5-search](../sqlite-fts5-search/) — the sibling pattern for full-text, same database

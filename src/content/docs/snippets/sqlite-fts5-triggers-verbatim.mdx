@@ -1,0 +1,92 @@
+---
+title: SQLite FTS5 sync triggers (copy-paste)
+description: The AFTER INSERT / DELETE / UPDATE triggers that keep an external-content FTS5 table in sync with its source table. Paste, rename, ship.
+---
+
+> **Source:** [markstack/src/db/schema.sql](https://github.com/RogerSquare/markstack)
+> **Category:** Snippet — SQLite
+
+**FTS5 sync triggers** — when FTS5 indexes a separate content table (`content='...'`), you're responsible for telling it when that source changes. Three triggers: after insert, after delete, after update. The code is mechanical enough to copy-paste; the reason it's here is because the shape catches people once per project.
+
+## Template
+
+Replace `ITEMS` and `ITEMS_FTS` with your real table names, and the column list with your indexed columns:
+
+```sql
+-- Source table
+CREATE TABLE ITEMS (
+  id INTEGER PRIMARY KEY,
+  title TEXT,
+  body TEXT
+);
+
+-- Virtual FTS5 table, external content
+CREATE VIRTUAL TABLE ITEMS_FTS USING fts5(
+  title, body,
+  content='ITEMS',
+  content_rowid='id',
+  tokenize='porter unicode61'
+);
+
+-- Insert trigger
+CREATE TRIGGER ITEMS_ai AFTER INSERT ON ITEMS BEGIN
+  INSERT INTO ITEMS_FTS(rowid, title, body)
+  VALUES (new.id, new.title, new.body);
+END;
+
+-- Delete trigger
+CREATE TRIGGER ITEMS_ad AFTER DELETE ON ITEMS BEGIN
+  INSERT INTO ITEMS_FTS(ITEMS_FTS, rowid, title, body)
+  VALUES ('delete', old.id, old.title, old.body);
+END;
+
+-- Update trigger (delete + insert, in that order)
+CREATE TRIGGER ITEMS_au AFTER UPDATE ON ITEMS BEGIN
+  INSERT INTO ITEMS_FTS(ITEMS_FTS, rowid, title, body)
+  VALUES ('delete', old.id, old.title, old.body);
+  INSERT INTO ITEMS_FTS(rowid, title, body)
+  VALUES (new.id, new.title, new.body);
+END;
+```
+
+That's the entire sync setup.
+
+## Why the delete trigger looks weird
+
+The `INSERT INTO FTS(FTS, ...)` shape is FTS5's "command" syntax — you're passing a control message ('delete') through a pseudo-insert. This is how FTS5 accepts non-standard operations without new SQL syntax.
+
+## Using a rebuild after manual imports
+
+If you bulk-inserted rows bypassing the triggers (e.g. a `.import` or a `COPY`), rebuild the FTS:
+
+```sql
+INSERT INTO ITEMS_FTS(ITEMS_FTS) VALUES ('rebuild');
+```
+
+This scans the content table and rebuilds the index. Fine for thousands of rows; plan downtime for millions.
+
+## Optimize for size
+
+After many inserts/deletes, the FTS index can get fragmented. Defragment:
+
+```sql
+INSERT INTO ITEMS_FTS(ITEMS_FTS) VALUES ('optimize');
+```
+
+Run periodically (weekly cron for a busy system). Returns space; faster queries.
+
+## Gotchas
+
+- **Trigger names are global** in SQLite. Prefix with your table name (`ITEMS_ai`, `ITEMS_ad`, `ITEMS_au`) to avoid collisions.
+- **Column lists in insert trigger must match the FTS column list.** Miss a column and it's indexed as NULL going forward.
+- **Update trigger is insert-after-delete, not update-in-place.** FTS5 has no direct "update" command; you delete the old and insert the new. Order matters — delete first.
+- **Foreign key cascades trigger these.** If `ITEMS` has `ON DELETE CASCADE` from elsewhere, the delete trigger fires automatically. Usually what you want; occasionally surprising.
+- **Match the tokenizer to your content.** `porter unicode61` is English-stemming + case-folding; for non-English, use `unicode61` without `porter`, or pick a tokenizer that fits your locale.
+- **Don't index BLOB columns.** FTS5 is text-only. Column types are effectively TEXT regardless of the source column type.
+- **Triggers can be slow on bulk inserts.** For a 100k-row initial import, disable triggers, import, then rebuild FTS at the end. Triggers are optimized for one-at-a-time writes.
+- **`PRAGMA synchronous = NORMAL`** speeds up the triggered writes at a small durability cost. Fine for most apps.
+
+## See also
+
+- [patterns/sqlite-fts5-search](../../patterns/sqlite-fts5-search/) — the pattern this implements
+- [projects/markstack](../../projects/markstack/) · [projects/artifex](../../projects/artifex/)

@@ -1,0 +1,83 @@
+---
+title: URL validation — permissive, not strict
+description: Accept anything URL-shaped. Don't check reachability, don't require http(s)://, don't pre-canonicalize. Bookmark tools get this wrong all the time.
+---
+
+> **Source:** [markstack/src/routes/bookmarks.ts](https://github.com/RogerSquare/markstack)
+> **Category:** Pattern — input handling
+
+**URL validation (permissive)** — for user-entered URLs (bookmarks, profile links, "paste a URL here" forms), validate loosely. Check the string parses as a URL; don't check the site responds; don't require a specific scheme. Over-strict validation has caused every bookmark tool since Delicious to be slightly wrong.
+
+## What it is
+
+Minimal validation:
+1. String is non-empty
+2. String parses with `new URL()` after adding a default scheme if missing
+3. Hostname is present (not `new URL('http:///')`)
+4. Scheme is in an allowlist (http, https, ftp, possibly mailto/tel/magnet for specialized cases)
+
+Skip: reachability check, DNS lookup, trailing-slash normalization, case folding.
+
+## Why it exists
+
+**The problem:** strict validation rejects valid URLs:
+
+- `github.com/foo` — valid as a scheme-less URL; users paste these constantly
+- `https://site.with.odd-port.example:8080/deep/path?utm=true#frag` — valid, just complex
+- `magnet:?xt=urn:btih:...` — valid, not http
+- `https://does-not-exist-right-now.example/` — valid; the site might be down temporarily
+
+Every time a URL tool rejects a valid URL, a user curses the tool.
+
+Permissive validation *accepts* and stores. The worst case: a bad URL sits in your DB and produces a broken link when clicked. That's user-visible and fixable. Blocking on submit is user-hostile and silently destroys intent.
+
+## Implementation
+
+```ts
+function validateURL(input: string): { ok: true; url: string } | { ok: false; error: string } {
+  const trimmed = input.trim();
+  if (!trimmed) return { ok: false, error: 'required' };
+
+  // Add scheme if missing (http is the right guess; upgrade via redirects)
+  const withScheme = /^[a-z][a-z0-9+.-]*:/i.test(trimmed) ? trimmed : `https://${trimmed}`;
+
+  try {
+    const u = new URL(withScheme);
+    if (!u.hostname) return { ok: false, error: 'missing hostname' };
+
+    const allowedSchemes = ['http:', 'https:', 'ftp:'];
+    if (!allowedSchemes.includes(u.protocol)) {
+      return { ok: false, error: `scheme ${u.protocol} not allowed` };
+    }
+
+    return { ok: true, url: u.toString() };
+  } catch {
+    return { ok: false, error: 'not a URL' };
+  }
+}
+```
+
+Store `u.toString()` — that's the canonicalized form that `URL` produces.
+
+## How it's used
+
+- **markstack** — POST /bookmarks runs user input through this, stores the normalized URL
+- **Cairn** — admin's "project link" input uses a simpler version ([snippets/normalize-link](../../snippets/cloudflare-proxy-off-for-ssh-host/))
+- **Pattern generalizes** to any app storing user-supplied URLs
+
+## Gotchas
+
+- **Don't require http(s)://.** Users paste `github.com/foo` all the time. Add the scheme for them.
+- **Don't strip trailing slashes.** `example.com/foo/` and `example.com/foo` are technically different URLs (depending on the server's config). Treat them as the user typed.
+- **Don't case-fold paths.** Hostname is case-insensitive; path is case-sensitive in HTTP. Lowercasing paths breaks legitimate URLs.
+- **Don't reject based on TLD.** A URL that worked yesterday can work tomorrow; a URL on an obscure TLD is still a valid URL.
+- **Don't check reachability at submit time.** Slow, flaky, and the right answer is usually "we don't know yet". Run a periodic background check for broken links if you care.
+- **Do encode special characters.** `new URL(...).toString()` percent-encodes non-ASCII and special chars consistently. Store the encoded form.
+- **Length cap.** 2KB is a reasonable upper bound for URLs — enough for very complex URLs, prevents accidental DB abuse.
+- **XSS by URL.** `javascript:alert(1)` is a valid-looking URL. The scheme allowlist rejects it before it's rendered as an `href`.
+- **`data:` URLs are a vector.** Data URLs can be arbitrarily large and carry embedded HTML/scripts. Not in the allowlist unless you specifically need them.
+
+## See also
+
+- [projects/markstack](../../projects/markstack/)
+- [patterns/pagination-cursor-vs-offset](../pagination-cursor-vs-offset/) — the other "lenient defaults" pattern markstack uses

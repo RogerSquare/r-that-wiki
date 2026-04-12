@@ -1,0 +1,90 @@
+---
+title: Pagination — offset first, cursor when you grow into it
+description: Offset pagination is trivial and scales to tens of thousands of rows. Cursor pagination is strictly better for very large datasets. Ship offset first; migrate when you need to.
+---
+
+> **Source:** [markstack/src/routes/bookmarks.ts](https://github.com/RogerSquare/markstack)
+> **Category:** Pattern — API
+
+**Pagination — offset vs cursor** — offset (`?page=3&limit=25`) is what most APIs ship with because it's trivial and maps cleanly to "page 3 of 12". Cursor (`?after=<opaque-token>&limit=25`) is strictly more correct under concurrent writes but requires more code. Ship offset until it hurts; migrate when it does.
+
+## What each looks like
+
+**Offset**:
+```
+GET /bookmarks?offset=50&limit=25
+  → { items: [...], total: 127 }
+```
+- Simple to implement: `SELECT ... LIMIT 25 OFFSET 50`
+- Page numbers map to offsets: page 3 at limit 25 = offset 50
+- UI: "Page 3 of 6" — familiar
+
+**Cursor**:
+```
+GET /bookmarks?after=eyJpZCI6Mzd9&limit=25
+  → { items: [...], nextCursor: 'eyJpZCI6NjJ9', hasMore: true }
+```
+- Cursor is an opaque token encoding "start after this row" (typically `{id: N}` base64'd)
+- Query: `SELECT ... WHERE id > :after ORDER BY id LIMIT 25`
+- UI: "Load more" button — less familiar but scales to infinite lists
+
+## Why offset first
+
+- **Zero infrastructure.** Every DB supports `LIMIT`/`OFFSET`. No special indexes needed.
+- **Users understand it.** "Page 3 of 12" is obvious; "nextCursor: eyJpZCI6Mzd9" is a developer detail.
+- **Arbitrary jumping.** Want page 7 directly? Offset lets you; cursor doesn't.
+
+For markstack at personal-scale (a few thousand bookmarks), offset pagination is fine. Postgres hits LIMIT/OFFSET hard at millions of rows; SQLite on a laptop handles tens of thousands without breaking a sweat.
+
+## Why cursor when you grow
+
+- **Stable under concurrent inserts.** If a row is added between "page 1" and "page 2", offset pagination shows the same row twice (or skips one). Cursor pagination doesn't care.
+- **O(log n) with an index.** `WHERE id > :after LIMIT 25` uses an index seek; `OFFSET 10000` scans and discards 10,000 rows.
+- **Infinite scroll UX.** No "page 1 of ???" — just "load more".
+
+You migrate when either:
+1. Performance degrades (offset is now the slow query)
+2. Duplicate/missing rows from concurrent writes become user-visible complaints
+
+## Migration path
+
+Run both for a release:
+
+```ts
+router.get('/bookmarks', async (req, res) => {
+  const limit = Math.min(100, Number(req.query.limit) || 25);
+
+  if (req.query.after) {
+    // New clients: cursor
+    const afterId = decodeCursor(req.query.after);
+    const items = await db.all('SELECT * FROM bookmarks WHERE id > ? ORDER BY id LIMIT ?', afterId, limit + 1);
+    const hasMore = items.length > limit;
+    if (hasMore) items.pop();
+    const nextCursor = hasMore ? encodeCursor(items[items.length - 1].id) : null;
+    return res.json({ items, nextCursor, hasMore });
+  }
+
+  // Old clients: offset
+  const offset = Number(req.query.offset) || 0;
+  const items = await db.all('SELECT * FROM bookmarks ORDER BY id LIMIT ? OFFSET ?', limit, offset);
+  const total = await db.get('SELECT COUNT(*) AS n FROM bookmarks');
+  return res.json({ items, total: total.n });
+});
+```
+
+Both clients work. Deprecate `offset` after clients migrate.
+
+## Gotchas
+
+- **`ORDER BY` is required for pagination.** Without an explicit order, the DB's row order is undefined and pagination gets weird. Pick a stable field (`id` or `created_at`).
+- **Stable order needs a tiebreaker.** If you order by `created_at`, two rows at the same timestamp can swap positions between requests. Include `id` as secondary: `ORDER BY created_at DESC, id DESC`.
+- **Opaque cursors prevent accidental reliance on internals.** Base64-encoding `{id: 37}` hides the structure; clients can't construct their own cursors or rely on cursor semantics. Change the format later without breaking clients.
+- **`total` is a problem at scale.** `SELECT COUNT(*)` scans the whole table on most DBs. At thousands of rows, cheap; at millions, slow. Cursor pagination drops `total` entirely (and "Load more" doesn't need a page count).
+- **Limit upper bound.** Cap at something reasonable (100-200). Otherwise a client can `?limit=1000000` and exhaust your DB.
+- **Reverse order.** "Latest first" is `ORDER BY id DESC`; cursor becomes `WHERE id < :after`. Easy to get backwards; write a test.
+- **Deleted rows.** Cursor pagination over IDs handles deletions automatically (deleted rows are just skipped). Offset pagination with COUNT(*) can have stale totals for a bit.
+
+## See also
+
+- [projects/markstack](../../projects/markstack/)
+- [patterns/url-validation-permissive](../url-validation-permissive/)

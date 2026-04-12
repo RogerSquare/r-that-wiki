@@ -1,0 +1,119 @@
+---
+title: OpenAPI security schemes — declaring JWT auth in Swagger
+description: Two YAML blocks add a "🔒" to protected routes in Swagger UI and let the "Authorize" button work. Easy to forget, easy to get wrong.
+---
+
+> **Source:** [markstack/src/openapi](https://github.com/RogerSquare/markstack)
+> **Category:** Snippet — OpenAPI
+
+**OpenAPI security schemes** — declaring your API's auth method in OpenAPI so Swagger UI knows what to do. Two blocks: a `securitySchemes` definition at the top level, and a `security` reference on each protected route (or globally). Swagger UI uses this to render a padlock icon and an "Authorize" button that puts the token in subsequent requests.
+
+## Define the scheme once
+
+In your top-level OpenAPI spec (or the swagger-jsdoc setup):
+
+```js
+const options = {
+  definition: {
+    openapi: '3.0.3',
+    info: { title: 'markstack API', version: '1.0.0' },
+
+    components: {
+      securitySchemes: {
+        bearerAuth: {
+          type: 'http',
+          scheme: 'bearer',
+          bearerFormat: 'JWT',
+        },
+      },
+    },
+  },
+  apis: ['./src/routes/*.ts'],
+};
+```
+
+## Apply globally (every route requires auth by default)
+
+```js
+    // ...definition...
+    security: [{ bearerAuth: [] }],
+```
+
+Every route in the spec now requires `Authorization: Bearer <token>`. Exceptions (login, register, public docs) add an empty `security` override:
+
+```js
+/**
+ * @swagger
+ * /auth/login:
+ *   post:
+ *     security: []         # no auth for login
+ *     summary: Log in
+ *     ...
+ */
+```
+
+## Apply per-route (opt-in)
+
+If most of your API is public, the opposite — only tag authed routes:
+
+```js
+/**
+ * @swagger
+ * /bookmarks:
+ *   post:
+ *     summary: Create a bookmark
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       ...
+ */
+```
+
+## Swagger UI effects
+
+With this in place:
+- Each authed route shows a 🔒 in the UI
+- An "Authorize" button appears at the top; clicking it prompts for the token
+- After authorizing, "Try it out" buttons include `Authorization: Bearer <token>` automatically
+
+## Other common schemes
+
+```js
+// API key in a header
+apiKeyAuth: {
+  type: 'apiKey',
+  in: 'header',
+  name: 'X-API-Key',
+},
+
+// OAuth2
+oauth2: {
+  type: 'oauth2',
+  flows: {
+    authorizationCode: {
+      authorizationUrl: 'https://example.com/oauth/authorize',
+      tokenUrl:         'https://example.com/oauth/token',
+      scopes: { read: 'Read', write: 'Write' },
+    },
+  },
+},
+
+// Basic auth (just for completeness; avoid in modern APIs)
+basicAuth: { type: 'http', scheme: 'basic' },
+```
+
+## Gotchas
+
+- **`bearerFormat: 'JWT'`** is informational. Swagger doesn't validate the token shape; it just shows JWT in the UI as a hint.
+- **Global `security` at the top + per-route `security: []`** is the pattern most APIs want — most endpoints are private, a handful are public.
+- **Swagger UI loses the token on page refresh.** It stores in sessionStorage by default. For dev-only APIs, fine; for demos you want shareable, consider passing the token in the URL (there's a `preauthorizeApiKey` hook).
+- **Multiple schemes.** An endpoint can accept either of two auth methods: `security: [{ bearerAuth: [] }, { apiKeyAuth: [] }]`. Array = OR (any works); object inside array = AND (all must be supplied).
+- **Scopes for OAuth2.** The empty array `[]` means "no specific scopes required". For scoped APIs: `[{ oauth2: ['read:bookmarks'] }]`.
+- **The UI's "Authorize" form.** For bearer it's one field; for OAuth2 it's a whole flow; for api key it's a single value. Users get confused if the UI form doesn't match what your server expects. Test.
+- **Don't document the login endpoint as secured.** Obvious, but the global `security` default catches it; remember to override with `security: []`.
+- **Docs at `/api/docs` should be public.** Not strictly a security scheme issue — just a reminder that the docs endpoint itself shouldn't require auth.
+
+## See also
+
+- [patterns/swagger-jsdoc-inline](../../patterns/swagger-jsdoc-inline/) — where these schemes live in the source
+- [patterns/jwt-refresh-rotation](../../patterns/jwt-refresh-rotation/) — what the bearer token represents

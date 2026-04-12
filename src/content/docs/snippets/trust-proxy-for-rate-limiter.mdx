@@ -1,0 +1,104 @@
+---
+title: "`app.set('trust proxy')` — the Express one-liner that makes rate limiting work"
+description: "Without it, `req.ip` is always the proxy's IP and every user shares one rate-limit bucket. With it, per-user limits work correctly."
+---
+
+> **Source:** [markstack/src/server.ts](https://github.com/RogerSquare/markstack) · [cairn](https://github.com/RogerSquare/cairn)
+> **Category:** Snippet — Express
+
+**`trust proxy`** — the Express config that tells the framework to read `X-Forwarded-For` for the client IP. One line; required behind nginx, Cloudflare, or any reverse proxy. Miss it and per-IP rate limiting becomes per-proxy-IP rate limiting — which is to say, global.
+
+## The line
+
+```ts
+app.set('trust proxy', 1);
+```
+
+That's it. Put it just after `const app = express()`.
+
+## What the number means
+
+- **`false` / `0`** (default) — `req.ip` is the TCP peer (the proxy)
+- **`true`** — trust all proxies (bad in production, fine in development)
+- **`1`** — trust one hop (the nearest proxy)
+- **`2`** — trust two hops (e.g. Cloudflare → nginx → your app)
+- **IP/CIDR list** — trust only these addresses
+- **function** — custom trust logic
+
+For most deployments, `1` or a specific list is right.
+
+## Why it matters
+
+Without `trust proxy`:
+
+```ts
+app.use(rateLimit({ windowMs: 60_000, max: 100 }));
+
+app.get('/api/something', (req, res) => {
+  console.log(req.ip);    // 127.0.0.1 (every request)
+  // ...
+});
+```
+
+The rate limiter keys by `req.ip`. Every request has the same IP (the proxy's). The 100-req/min limit is now global across every user. One bad actor exhausts it for everyone.
+
+With `app.set('trust proxy', 1)` and the proxy setting `X-Forwarded-For`:
+
+```ts
+// req.ip now reads from X-Forwarded-For and returns the real client IP
+```
+
+Per-IP rate limiting works correctly.
+
+## When the number matters
+
+**One-hop (`trust proxy: 1`)** — nginx in front of your app, directly reachable from the internet:
+
+```
+user (203.0.113.5) → nginx (10.0.0.1) → app
+    X-Forwarded-For: 203.0.113.5
+    app.set('trust proxy', 1) → req.ip = 203.0.113.5  ✓
+```
+
+**Two-hop (`trust proxy: 2`)** — Cloudflare in front of nginx in front of your app:
+
+```
+user (203.0.113.5) → Cloudflare (104.21.x) → nginx (10.0.0.1) → app
+    X-Forwarded-For: 203.0.113.5, 104.21.x
+    app.set('trust proxy', 2) → req.ip = 203.0.113.5  ✓
+```
+
+Wrong count means the wrong IP. `trust proxy: 1` behind both CF and nginx gives you Cloudflare's IP. Everyone behind Cloudflare shares that.
+
+## Cloudflare-specific alternative
+
+Cloudflare also sets `CF-Connecting-IP` with the real client IP, one hop only:
+
+```ts
+app.set('trust proxy', 1);
+
+// Or, for Cloudflare specifically:
+app.use((req, res, next) => {
+  const cfIp = req.get('cf-connecting-ip');
+  if (cfIp) req.ip = cfIp;
+  next();
+});
+```
+
+`CF-Connecting-IP` is more robust than counting hops — it only comes from Cloudflare, and it's the client IP regardless of proxies between.
+
+## Gotchas
+
+- **`trust proxy` must be set before routes are registered.** Not a runtime toggle; configures how Express parses each request.
+- **`trust proxy: true` in production is an attack.** Untrusted clients set `X-Forwarded-For: 1.2.3.4, 5.6.7.8, ...` and Express obediently reads it. Use `1` or an IP list.
+- **IPv6.** `req.ip` returns the original IPv6 address when the client is IPv6. Rate-limiter keying by IPv6 usually wants to mask to `/64` — one user can have many addresses in a /64.
+- **WebSocket upgrades.** Separate connection path. Check that `req.ip` works on upgraded requests if you rate-limit socket connections.
+- **`req.ips` (plural)** gives you the full forwarding chain if you need it.
+- **Tests.** Tests against `supertest` have `req.ip = 127.0.0.1` with no forwarded header. Either mock the header or accept the test discrepancy.
+- **`req.protocol`, `req.host`.** These also read forwarded headers when `trust proxy` is set. Cookie `Secure` behavior depends on `req.protocol === 'https'`; without trust proxy it says 'http' and Secure cookies break.
+
+## See also
+
+- [patterns/rate-limit-per-endpoint](../../patterns/rate-limit-per-endpoint/) — what this setting enables
+- [snippets/nginx-reverse-proxy-with-node-backend](../nginx-reverse-proxy-with-node-backend/)
+- [patterns/cloudflare-orange-vs-grey-cloud](../../patterns/cloudflare-orange-vs-grey-cloud/)
