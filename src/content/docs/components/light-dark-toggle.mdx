@@ -1,0 +1,70 @@
+---
+title: Light/dark toggle
+description: The sun/moon button that flips the site's theme class. Pairs with the anti-flash script.
+---
+
+import LightDarkToggle from '../../../examples/light-dark-toggle.tsx';
+
+> **Source:** [cairn/ts/src/web-server.ts](https://github.com/RogerSquare/cairn/blob/main/ts/src/web-server.ts) — nav bar toggle
+> **Category:** Control
+
+**Light/dark toggle** — the button. Reads the current class on `document.documentElement`, flips it, persists the choice to `localStorage`. Works together with the [anti-flash theme script](../../patterns/anti-flash-theme-script/) to avoid any wrong-theme flash on first paint.
+
+## What it is
+
+An icon button (sun when dark, moon when light). On click, toggles a class on the root element. Saves the choice. CSS transitions smooth the swap — 240ms on `background`, `color`, and `border-color` is the sweet spot.
+
+## Why it exists
+
+- **Explicit control beats auto-detect.** Respect `prefers-color-scheme` as the initial guess, but let the user override and remember.
+- **OLED-friendliness.** Dark mode isn't a fashion statement; on OLED displays it's the difference between "readable" and "retina burn".
+- **Accessibility.** Some users need light; some need dark; a minority have a strong preference the OS hasn't been told about.
+
+## Live
+
+<LightDarkToggle client:load />
+
+## Code
+
+```jsx
+function LightDarkToggle() {
+  const [theme, setTheme] = useState(() => {
+    // Hydrate from current document state (set by the anti-flash script)
+    return document.documentElement.className === 'light' ? 'light' : 'dark';
+  });
+
+  const toggle = () => {
+    const next = theme === 'dark' ? 'light' : 'dark';
+    setTheme(next);
+    document.documentElement.className = next;
+    try { localStorage.setItem('theme', next); } catch {}
+  };
+
+  return (
+    <button onClick={toggle} aria-label="Toggle theme">
+      {theme === 'dark' ? '☀️' : '🌙'}
+    </button>
+  );
+}
+```
+
+## How it's used
+
+- **Cairn (web)** — always in the top-right nav, visible on every page
+- **Pattern generalizes** to any site offering a theme toggle
+
+## Gotchas
+
+- **Button must persist its choice.** Without `localStorage.setItem`, every navigation reverts to the OS default — infuriating.
+- **Pair with the anti-flash script.** Without the inline `<script>` in `<head>` ([anti-flash-theme-script](../../patterns/anti-flash-theme-script/)), the first paint is the default theme, then React mounts, then the class swaps. Don't ship one without the other.
+- **Don't animate the toggle itself.** The icon swap should be instant or nearly so. Animating the *page* is fine (200-300ms). Animating the button makes it feel laggy.
+- **Label with `aria-label`.** Emoji-only buttons with no label are screen-reader hostile.
+- **Respect system changes.** If the user has set `theme = 'system'` (honoring their OS), `window.matchMedia('(prefers-color-scheme: light)')` fires a `change` event when the OS setting flips at sunset etc. Listen and update if they haven't made an explicit choice.
+- **Transition on the right properties.** `transition: all` is too broad (re-runs on every style change). Scope to `background-color`, `color`, `border-color`.
+- **Keyboard accessibility.** `<button>` is keyboard-focusable by default. Don't use a `<div>` with onClick.
+- **Icon pick.** Sun/moon is universal. "Light mode" / "Dark mode" text is clearer but takes more space. Pick one style and don't mix.
+
+## See also
+
+- [patterns/anti-flash-theme-script](../../patterns/anti-flash-theme-script/) — the other half of dark mode done right
+- [projects/cairn](../../projects/cairn/)

@@ -1,0 +1,71 @@
+---
+title: Tab panel navigation
+description: Terminal-style tabs with arrow-key navigation. Ink original; browser version works the same way.
+---
+
+import TabPanelNavigation from '../../../examples/tab-panel-navigation.tsx';
+
+> **Source:** [cairn/ts/src/Portfolio.tsx](https://github.com/RogerSquare/cairn) — Ink layout · browser port here
+> **Category:** Navigation
+
+**Tab panel navigation** — horizontal tabs at the top, active tab wrapped in `[brackets]`, content below. Arrow keys (or `[` / `]`) move between tabs without a mouse.
+
+## What it is
+
+A list of tab labels rendered in order, with the active tab visually distinguished (brackets + color inversion in the terminal; background highlight in the browser). Keyboard listener on the parent swaps the active index. That's the whole navigation system — no router, no state machine.
+
+## Why it exists
+
+A terminal portfolio can't use URLs. It needs a visible navigation metaphor that works with a keyboard-only interface. Brackets-as-selection is the classic TUI idiom (lazygit, htop, fzf). The web version of Cairn mirrors this style on purpose — the visual vocabulary carries over.
+
+## Live
+
+Click a tab or use **← →** / **[ ]** to switch.
+
+<TabPanelNavigation client:load />
+
+## Ink version (sketch)
+
+```tsx
+import { Box, Text, useInput } from 'ink';
+
+function TabPanel({ tabs }) {
+  const [active, setActive] = useState(0);
+  useInput((input, key) => {
+    if (key.rightArrow || input === ']') setActive(a => (a + 1) % tabs.length);
+    if (key.leftArrow  || input === '[') setActive(a => (a - 1 + tabs.length) % tabs.length);
+  });
+  return (
+    <Box flexDirection="column">
+      <Box>
+        {tabs.map((t, i) => (
+          <Text key={t.id} color={i === active ? 'cyan' : 'gray'}>
+            {i === active ? `[${t.label}]` : ` ${t.label} `}
+          </Text>
+        ))}
+      </Box>
+      <Box marginTop={1}>{tabs[active].body}</Box>
+    </Box>
+  );
+}
+```
+
+## How it's used
+
+- **Cairn (SSH)** — Portfolio's top-level sections
+- **Cairn (web)** — same visual style, web semantics
+- **Pattern generalizes** to any keyboard-first multi-view UI
+
+## Gotchas
+
+- **Keyboard conflict with the browser.** Arrow keys scroll the page by default. In the browser version, only intercept them when focus is inside the panel; otherwise users scrolling with arrows accidentally tab through sections.
+- **Tab state in URL hash.** For the web version, consider `#about`, `#projects`, so deep-links work. Not needed for the SSH version (no URLs there).
+- **Active visual must survive color-blindness.** Color alone is a weak signal; the brackets are the actual signal. Don't remove them.
+- **Small viewport: overflow or wrap?** More tabs than fit horizontally need either horizontal scroll or a hamburger menu. Cairn chose to keep it at 5-6 tabs max.
+- **Initial tab.** Default to `0` for SSH (most visitors want the landing/about); for web, honor the hash fragment if present.
+- **Accessibility.** Tabs should have `role="tablist"`, each tab `role="tab"` with `aria-selected`, the content `role="tabpanel"` with `aria-labelledby`. Necessary for screen readers.
+- **Don't use this for settings UIs.** Tabs imply parallel content; settings with save/cancel semantics want a different pattern (usually a scrollable list).
+
+## See also
+
+- [projects/cairn](../../projects/cairn/) · [projects/kaleidoscope](../../projects/kaleidoscope/) — the terminal conventions

@@ -1,0 +1,98 @@
+---
+title: Markdown blog from the filesystem
+description: Blog posts live as `.md` files in a directory. Server reads them at request time. No CMS, no database, no build step.
+---
+
+> **Source:** [cairn/ts/src/web-server.ts](https://github.com/RogerSquare/cairn/blob/main/ts/src/web-server.ts) — `/blog`, `/blog/:slug`
+> **Category:** Pattern — content
+
+**Markdown blog from the filesystem** — one directory of `.md` files, each with YAML frontmatter. The server reads the directory on each request (or caches it), parses frontmatter with `gray-matter`, renders markdown with `marked`. That's the whole blog system.
+
+## What it is
+
+- **Directory**: `posts/` (or `$CAIRN_DATA_DIR/posts/` in prod — see [cairn-data-dir](../cairn-data-dir/))
+- **Filename**: `YYYY-MM-DD-slug.md` — date in the name so they sort naturally
+- **Frontmatter**: `title`, `date`, `tags`, `description`, optional `project`
+- **Body**: markdown, rendered to HTML at request time
+
+## Why it exists
+
+Blog software is often bigger than the blog. For a few dozen posts, these work and don't:
+
+1. **WordPress / Ghost** — full CMS. Overkill. Deploying an auth'd service next to a static-feeling site.
+2. **Static site generators (Astro/Hugo/Jekyll)** — great, but require a build step at deploy time.
+3. **Markdown-in-a-folder, rendered at request time** — no build, editable over SSH or through an admin UI, fast enough for the scale.
+
+**The fix:** option (3). Trades build-time speed for request-time simplicity. For a blog that gets hundreds of views per day, the request-time render cost is meaningless.
+
+## Shape
+
+```ts
+import matter from 'gray-matter';
+import { marked } from 'marked';
+import { readdirSync, readFileSync } from 'fs';
+import { join } from 'path';
+
+const POSTS_DIR = process.env.CAIRN_DATA_DIR
+  ? join(process.env.CAIRN_DATA_DIR, 'posts')
+  : join(__dirname, '..', 'posts');
+
+interface Post {
+  slug: string; title: string; date: string;
+  tags: string[]; description: string;
+  html: string; content: string;
+}
+
+function loadPosts(): Post[] {
+  return readdirSync(POSTS_DIR)
+    .filter(f => f.endsWith('.md'))
+    .map(f => {
+      const raw = readFileSync(join(POSTS_DIR, f), 'utf8');
+      const parsed = matter(raw);
+      return {
+        slug: f.replace(/\.md$/, ''),
+        title: parsed.data.title ?? '',
+        date: parsed.data.date ?? '',
+        tags: parsed.data.tags ?? [],
+        description: parsed.data.description ?? '',
+        content: parsed.content,
+        html: marked.parse(parsed.content) as string,
+      };
+    })
+    .sort((a, b) => b.date.localeCompare(a.date));
+}
+
+app.get('/blog', (_req, res) => {
+  const posts = loadPosts();
+  res.send(layout('Blog', renderList(posts)));
+});
+
+app.get('/blog/:slug', (req, res) => {
+  const posts = loadPosts();
+  const post = posts.find(p => p.slug === req.params.slug);
+  if (!post) return res.status(404).send(notFound());
+  res.send(layout(post.title, renderPost(post)));
+});
+```
+
+## How it's used
+
+- **Cairn** — `r-that.com/blog` serves the whole list; individual posts at `/blog/<slug>`; markdown source lives at `/var/lib/cairn/posts/*.md`
+- **Pattern generalizes** to any blog-sized content surface where a full CMS is overkill
+
+## Gotchas
+
+- **Disable raw HTML in markdown.** Admin-generated posts might contain HTML, which bypasses escaping. `marked` exposes a renderer override: `marked.use({ renderer: { html: () => '' } })` kills inline HTML. Trade-off: you can't write `<iframe>` in posts, but neither can anyone who hacks the admin.
+- **Cache or don't?** Re-reading the whole directory per request is fine at 20 posts. At 200, add an in-memory cache keyed on directory mtime. At 2000, move to a SQLite index.
+- **Date in the filename matters.** Sorting by `date` frontmatter alone is sloppy — missing or malformed dates fall to the bottom. Using filename as the canonical order is more robust; the frontmatter date is display-only.
+- **Slug slug.** `YYYY-MM-DD-` prefix in the filename makes URLs ugly (`/blog/2026-04-08-my-post`). Strip the date from the slug: `f.replace(/^\d{4}-\d{2}-\d{2}-/, '').replace(/\.md$/, '')`.
+- **Syntax highlighting.** `marked` doesn't include it. Add `marked-highlight` plus `shiki` or `highlight.js`. Load language defs on demand.
+- **Images alongside posts.** Simplest: put images in `public/blog/` with matching slugs and link absolutely in markdown. Colocated images (`posts/slug/image.png`) require a different route mapping.
+- **Feed generation reads the same dir.** See [rss-and-sitemap-generation](../rss-and-sitemap-generation/) — one directory, multiple views.
+- **Admin edits bypass the cache.** If you add an in-memory cache, invalidate it after admin writes.
+
+## See also
+
+- [patterns/cairn-data-dir](../cairn-data-dir/) — where the posts live in prod
+- [patterns/rss-and-sitemap-generation](../rss-and-sitemap-generation/) — feeds from the same directory
+- [patterns/hand-rolled-express-admin-cms](../hand-rolled-express-admin-cms/) — the admin UI for creating posts

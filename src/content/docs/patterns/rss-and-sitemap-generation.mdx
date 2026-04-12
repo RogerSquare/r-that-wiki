@@ -1,0 +1,104 @@
+---
+title: RSS and sitemap generation from a markdown directory
+description: One source of truth (the posts directory) feeds the blog UI, `/rss.xml`, `/sitemap.xml`, and `/robots.txt`. No duplication.
+---
+
+> **Source:** [cairn/ts/src/web-server.ts](https://github.com/RogerSquare/cairn/blob/main/ts/src/web-server.ts) — `/rss.xml`, `/sitemap.xml`, `/robots.txt`
+> **Category:** Pattern — SEO
+
+**RSS + sitemap from markdown** — the blog directory is already the canonical source of your published content. Expose four more routes (`/rss.xml`, `/sitemap.xml`, `/sitemap-index.xml`, `/robots.txt`) that emit XML derived from the same `loadPosts()` call. Zero duplication, zero build step.
+
+## What it is
+
+For each feed:
+- Read posts (or pages) from the source of truth
+- Map each to a feed-entry string
+- Emit XML with the right content type
+
+Routes run at request time, not build time. For a blog of a few dozen entries, the whole feed renders in single-digit milliseconds.
+
+## Why it exists
+
+**The problem:** Feeds are "implementation details" nobody wants to own:
+
+1. **Generator tools** (feed-me-well, rss-generator, etc.) — fine, but another dep whose tag conventions you have to learn
+2. **Hand-written XML** — terrifying until you realize RSS is ~20 lines of template
+3. **Skip them** — breaks RSS readers, SEO, AI scrapers
+
+**The fix:** hand-render. It's shorter than the dependency's docs.
+
+## RSS
+
+```ts
+app.get('/rss.xml', (_req, res) => {
+  const posts = loadPosts().slice(0, 50);
+  const items = posts.map(p => `
+  <item>
+    <title>${esc(p.title)}</title>
+    <link>https://r-that.com/blog/${esc(p.slug)}</link>
+    <guid isPermaLink="true">https://r-that.com/blog/${esc(p.slug)}</guid>
+    <pubDate>${new Date(p.date).toUTCString()}</pubDate>
+    <description>${esc(p.description)}</description>
+  </item>`).join('');
+
+  res.type('application/rss+xml').send(`<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Roger Ochoa — blog</title>
+    <link>https://r-that.com/blog</link>
+    <description>Deep-dives on software, terminal UIs, and self-hosted infra.</description>
+    <language>en-us</language>
+    ${items}
+  </channel>
+</rss>`);
+});
+```
+
+## Sitemap
+
+```ts
+const STATIC_PAGES = ['/', '/about', '/projects', '/experience', '/blog', '/contact'];
+
+app.get('/sitemap.xml', (_req, res) => {
+  const posts = loadPosts();
+  const urls = [
+    ...STATIC_PAGES.map(p => `<url><loc>https://r-that.com${p}</loc></url>`),
+    ...posts.map(p =>
+      `<url><loc>https://r-that.com/blog/${esc(p.slug)}</loc>${p.date ? `<lastmod>${p.date}</lastmod>` : ''}</url>`
+    ),
+  ];
+  res.type('application/xml').send(`<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+${urls.join('\n')}
+</urlset>`);
+});
+
+// robots.txt
+app.get('/robots.txt', (_req, res) => {
+  res.type('text/plain').send(
+    `User-agent: *\nAllow: /\nDisallow: /admin\nSitemap: https://r-that.com/sitemap.xml\n`
+  );
+});
+```
+
+## How it's used
+
+- **Cairn** — all four routes on `r-that.com`
+- **Pattern generalizes** to any content-driven site where a CMS isn't in the picture
+
+## Gotchas
+
+- **Escape is non-negotiable.** `&`, `<`, `>`, `'`, `"` in titles or descriptions break XML. Run every interpolated string through an `esc()` that handles all five. Bonus: avoid CDATA — it's more code than it's worth for plain text.
+- **`pubDate` format is picky.** RSS readers expect RFC 822 / 1123. `new Date(p.date).toUTCString()` produces that. Don't hand-format.
+- **`lastmod` in sitemap is ISO 8601.** Different format than RSS; make sure you're not using the RSS formatter for the sitemap.
+- **Truncate `description` in RSS.** Some readers truncate for you, some don't. Keep descriptions under ~300 characters or include a `<content:encoded>` with the full HTML.
+- **GUID stability.** GUIDs must be unique *and stable*. Using the canonical URL is fine as long as you never change URLs. Renaming a slug breaks the GUID → the post reappears as new in every RSS reader.
+- **`application/rss+xml` is the right content type.** `application/xml` works but some readers sniff content; be explicit.
+- **Cache control.** RSS is frequently polled. Set a `Cache-Control: max-age=300` or similar to save cycles — readers will revalidate if you return 304 or set an ETag.
+- **Submit the sitemap.** Google Search Console doesn't discover `/sitemap.xml` reliably unless you submit or reference it in `robots.txt`. The `Sitemap:` line in `robots.txt` above is the recommended surface.
+- **Disallow admin paths.** `Disallow: /admin` in robots.txt keeps legit crawlers from indexing your admin UI. Not a security measure (attackers ignore robots.txt) but good hygiene.
+
+## See also
+
+- [patterns/markdown-blog-from-filesystem](../markdown-blog-from-filesystem/) — the source of truth this pattern reads from
+- [patterns/json-ld-schema-org](../json-ld-schema-org/) — the third SEO-adjacent pattern

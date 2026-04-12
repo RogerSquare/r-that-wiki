@@ -1,0 +1,75 @@
+---
+title: Immich public album embed
+description: Pull a photo gallery from a self-hosted Immich server via its public-share API. No re-implementing gallery storage.
+---
+
+> **Source:** [cairn/ts/src/web-server.ts](https://github.com/RogerSquare/cairn/blob/main/ts/src/web-server.ts) — `/photos` route · env vars `IMMICH_URL`, `IMMICH_SHARE_KEY`, `IMMICH_ALBUM_ID`
+> **Category:** Pattern — integration
+
+**Immich public album embed** — use your self-hosted [Immich](https://immich.app/) instance as the photo storage, then render a gallery page on your portfolio by calling Immich's public-share API. You already run Immich for personal photos; reuse it instead of building a second gallery.
+
+## What it is
+
+A route on your portfolio that fetches the album contents from Immich at request time (or on a cache timer), turns each asset into an `<img>` or thumbnail-plus-lightbox, and renders. Three env vars wire the integration: the Immich URL, the public share key, and the album id.
+
+## Why it exists
+
+**The problem:** Portfolios want a photo section. Options:
+
+1. **Build a mini gallery** — upload, storage, thumbnails, metadata, deletes. Maybe three weeks to do well.
+2. **Link to Immich / Flickr / Instagram** — users leave your site.
+3. **Re-use an existing photo server via its public-share API** — your portfolio just renders; storage is elsewhere.
+
+**The fix:** option (3). You're probably already running Immich. Adding a photo section to the portfolio is now a fetch + a grid.
+
+## Shape
+
+```ts
+const IMMICH_URL       = process.env.IMMICH_URL       || 'https://photos.r-that.com';
+const IMMICH_SHARE_KEY = process.env.IMMICH_SHARE_KEY || '';
+const IMMICH_ALBUM_ID  = process.env.IMMICH_ALBUM_ID  || '';
+
+async function fetchAlbum() {
+  const url = `${IMMICH_URL}/api/shared-links/me?key=${IMMICH_SHARE_KEY}`;
+  const res = await fetch(url, { headers: { 'Accept': 'application/json' }});
+  if (!res.ok) throw new Error(`Immich fetch failed: ${res.status}`);
+  const data = await res.json();
+  return data.album.assets;       // array of { id, originalPath, type, duration, ... }
+}
+
+app.get('/photos', async (_req, res) => {
+  try {
+    const assets = await fetchAlbum();
+    const items = assets.map(a => {
+      const thumb = `${IMMICH_URL}/api/assets/${a.id}/thumbnail?key=${IMMICH_SHARE_KEY}`;
+      const full  = `${IMMICH_URL}/api/assets/${a.id}/original?key=${IMMICH_SHARE_KEY}`;
+      return `<a href="${full}" class="photo-tile"><img src="${thumb}" loading="lazy"></a>`;
+    }).join('');
+    res.send(layout('Photos', `<div class="photo-grid">${items}</div>`));
+  } catch (e) {
+    res.status(500).send(layout('Photos', 'Photo service is unavailable right now.'));
+  }
+});
+```
+
+## How it's used
+
+- **Cairn** — `/photos` section backed by a public album on `photos.r-that.com`
+- **Pattern generalizes** to any self-hosted photo server with a public-share API (PhotoPrism, LibrePhotos)
+
+## Gotchas
+
+- **The share key is a secret-ish token.** Anyone with the key can view the album. That's the point — but don't put the key in public-facing JavaScript; proxy the calls through your backend.
+- **Cache aggressively.** Hitting Immich on every request is wasteful. 5-minute in-memory cache is usually plenty. Invalidate on admin action if you ever build "refresh" into the UI.
+- **Thumbnail cost.** Immich serves its own thumbnails — don't re-render with Sharp. Lazy-load images with `loading="lazy"` to spare mobile data.
+- **Originals are big.** Linking directly to `/original` downloads full-res (potentially 10+ MB). Offer a "preview" endpoint (Immich's `preview` size) and only link to `original` on click-through.
+- **Fallback UI for 5xx.** Immich will occasionally be down. Render "photos unavailable" rather than crashing your portfolio.
+- **Album id vs share id confusion.** Immich has two ways to share: public shared-link (uses a key) and album id (internal). The API you want is `shared-links/me`; the key is part of the URL.
+- **CORS.** Server-to-server fetch from your backend has no CORS issue; client-side fetch does. If you move the gallery render to the client, proxy through your backend.
+- **Metadata leakage.** Immich thumbnails strip EXIF; originals often don't. If the album is public, consider stripping GPS EXIF before upload or via Immich's settings.
+- **Rate limiting on Immich.** Immich's public endpoints typically don't hard-limit, but a deep-linking user loading 100 originals can hammer your storage. Serve tiles, link to originals.
+
+## See also
+
+- [projects/cairn](../../projects/cairn/) — where `/photos` lives
+- [patterns/python-ml-subprocess](../python-ml-subprocess/) — Artifex's approach to photo ML, for contrast with "don't build it, integrate it"

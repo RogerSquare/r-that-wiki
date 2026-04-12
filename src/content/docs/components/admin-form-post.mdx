@@ -1,0 +1,126 @@
+---
+title: Admin form post (repeatable shape)
+description: The same POST-form shape reused across every `/admin/*` content type. One template, six data types.
+---
+
+> **Source:** [cairn/ts/src/web-server.ts](https://github.com/RogerSquare/cairn/blob/main/ts/src/web-server.ts) — `/admin/projects`, `/admin/skills`, `/admin/experience`, `/admin/about`, `/admin/new`
+> **Category:** Form (server-rendered)
+
+**Admin form post** — the repeated HTML-form shape that the Cairn admin uses for every content type. Same layout, same submit button, same `csrfField()` placement, same post-save redirect. Recognizing this shape means any new content type is 30 minutes of work, not half a day.
+
+## What it is
+
+A server-rendered form, rendered as an HTML string:
+
+```html
+<form method="POST" action="/admin/<type>/<action>">
+  <input type="hidden" name="_csrf" value="...">
+  <label>Field 1</label> <input name="field1" value="...">
+  <label>Field 2</label> <textarea name="field2">...</textarea>
+  <!-- ...per-type fields... -->
+  <button type="submit" class="btn btn-primary">Save</button>
+</form>
+```
+
+No React, no Next.js, no SPA. Just an HTML form handled by an Express POST route.
+
+## Why it exists
+
+**The problem:** Modern frontend patterns push users toward SPA forms with client-side validation, optimistic updates, and modal flows. For a single-admin CMS:
+
+1. All those affordances cost implementation time
+2. The back button and the refresh button already work correctly with plain HTML forms
+3. You don't need to re-learn why POST-Redirect-GET is the right pattern
+
+**The fix:** embrace the 20-year-old pattern that just works. Save, redirect, render a success banner via query param.
+
+## The shape
+
+```ts
+// List page
+app.get('/admin/projects', requireAdmin, (req, res) => {
+  const data = getData();
+  const msg = req.query.msg;
+  res.send(adminLayout('Projects', `
+    ${msg ? `<div class="flash">${esc(String(msg))}</div>` : ''}
+    <h2>Projects</h2>
+    <a class="btn btn-primary" href="/admin/projects/new">Add</a>
+    <ul>
+      ${data.projects.map((p, i) => `
+        <li>
+          ${esc(p.name)}
+          <a class="btn" href="/admin/projects/edit/${i}">Edit</a>
+          <form method="POST" action="/admin/projects/delete/${i}" style="display:inline">
+            ${csrfField(req)}
+            <button class="btn btn-danger" onclick="return confirm('Delete?')">Delete</button>
+          </form>
+        </li>
+      `).join('')}
+    </ul>
+  `));
+});
+
+// New form
+app.get('/admin/projects/new', requireAdmin, (req, res) => {
+  res.send(adminLayout('New project', projectForm(req, null)));
+});
+
+// Edit form (same template, prefilled)
+app.get('/admin/projects/edit/:idx', requireAdmin, (req, res) => {
+  const data = getData();
+  const p = data.projects[safeIdx(req.params.idx, data.projects)];
+  res.send(adminLayout('Edit project', projectForm(req, p)));
+});
+
+// Shared template
+function projectForm(req, p) {
+  const action = p ? `/admin/projects/edit/${p.index}` : '/admin/projects/new';
+  return `
+    <form method="POST" action="${action}">
+      ${csrfField(req)}
+      <label>Name</label> <input type="text" name="name" value="${esc(p?.name ?? '')}" required>
+      <label>Link</label> <input type="text" name="link" value="${esc(p?.link ?? '')}"
+             placeholder="example.com/path (scheme optional)">
+      <label>Description</label>
+      <textarea name="desc" rows="3">${esc(p?.desc ?? '')}</textarea>
+      <label>Tech (comma separated)</label>
+      <input type="text" name="tech" value="${esc(p?.tech?.join(', ') ?? '')}">
+      <button type="submit" class="btn btn-primary">Save</button>
+    </form>
+  `;
+}
+
+// Save handlers (same shape for new/edit)
+app.post('/admin/projects/new', requireAdmin, (req, res) => {
+  const data = getData();
+  data.projects.push({
+    name: b(req, 'name'),
+    link: normalizeLink(b(req, 'link')),
+    desc: b(req, 'desc'),
+    tech: b(req, 'tech').split(',').map(s => s.trim()).filter(Boolean),
+  });
+  saveData(data);
+  res.redirect('/admin/projects?msg=created');
+});
+```
+
+## How it's used
+
+- **Cairn** — same template shape for `/admin/projects`, `/admin/skills`, `/admin/experience`, `/admin/new` (blog posts), `/admin/about`
+- **Pattern generalizes** to any single-admin server-rendered CMS
+
+## Gotchas
+
+- **Escape every interpolation.** The template is string concatenation; one unescaped value = stored XSS. Route every insertion through `esc()`.
+- **POST-Redirect-GET.** Always redirect after a successful POST. Otherwise refresh re-submits the form.
+- **CSRF on every mutating form.** `${csrfField(req)}` is part of the template. Forget it once and that form becomes a CSRF vulnerability.
+- **Required fields.** Use HTML5 `required` where possible. Server validation is still mandatory — browsers can lie.
+- **Cancel buttons go somewhere.** A Cancel `<a>` with `href` back to the list page is less confusing than an ambiguous "close modal" button.
+- **Long-form content editors.** `<textarea>` is fine for intro paragraphs. If you need Markdown editing with preview, you've outgrown this pattern — either ship a small JS-enhanced editor for that one field or accept unadorned textarea.
+- **Per-field errors.** Plain forms don't have a natural error state. The simplest pattern is `?msg=error-in-X` on redirect, banner on the list page. Prettier is re-rendering the form with an `error` variable.
+- **Auto-save is unnecessary.** Save is one button click. Auto-save adds complexity with no real win for a CMS where every content change is deliberate.
+
+## See also
+
+- [patterns/hand-rolled-express-admin-cms](../../patterns/hand-rolled-express-admin-cms/) — the broader pattern this embodies
+- [patterns/csrf-for-hand-rolled-admin](../../patterns/csrf-for-hand-rolled-admin/) — the guard the form relies on

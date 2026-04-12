@@ -1,0 +1,88 @@
+---
+title: JSON-LD schema.org for Person and BlogPosting
+description: A tiny script tag that tells Google, LinkedIn, and AI crawlers who you are and what each page is about.
+---
+
+> **Source:** [cairn/ts/src/web-server.ts](https://github.com/RogerSquare/cairn/blob/main/ts/src/web-server.ts) — layout template
+> **Category:** Pattern — SEO
+
+**JSON-LD schema.org** — a `<script type="application/ld+json">` block in your layout with structured metadata about the entity on the page. Crawlers and AI scrapers look for it before they try to parse your HTML. Cheap; underused.
+
+## What it is
+
+A standard JSON format (schema.org vocabulary) describing what a page is: a `Person`, a `BlogPosting`, a `Product`. Included in a `<script type="application/ld+json">` tag anywhere in the document. Search engines read it; users don't see it.
+
+## Why it exists
+
+**The problem:** Crawlers guess. Without structured data, a page saying "Roger Ochoa, Software Engineer" could be about a person, a company page mentioning a person, a news article, or a fictional character. The guess is usually right; sometimes isn't.
+
+**The fix:** tell them explicitly. Schema.org is the lingua franca — Google recognizes it, LinkedIn reads it, AI scrapers often prefer it to parsing HTML.
+
+Three entities matter for most portfolios:
+- `Person` — the author on hero / landing
+- `BlogPosting` — per blog post
+- `WebSite` — the site itself (for sitelinks search box, etc.)
+
+## Person
+
+```ts
+function renderPersonJsonLd(contact: Contact): string {
+  const data = {
+    '@context': 'https://schema.org',
+    '@type': 'Person',
+    name: contact.name,
+    jobTitle: contact.title,
+    url: 'https://r-that.com',
+    email: contact.email,
+    address: { '@type': 'PostalAddress', addressLocality: contact.location },
+    sameAs: [
+      `https://${contact.github}`,
+      `https://${contact.website}`,
+    ],
+  };
+  return `<script type="application/ld+json">${JSON.stringify(data)}</script>`;
+}
+```
+
+Ship it in the layout head *only* on the hero (landing) page. Don't put a Person on every page — that dilutes the signal.
+
+## BlogPosting
+
+```ts
+function renderBlogPostingJsonLd(post: Post, author: Contact): string {
+  const data = {
+    '@context': 'https://schema.org',
+    '@type': 'BlogPosting',
+    headline: post.title,
+    description: post.description,
+    datePublished: post.date,
+    author: { '@type': 'Person', name: author.name, url: 'https://r-that.com' },
+    mainEntityOfPage: {
+      '@type': 'WebPage',
+      '@id': `https://r-that.com/blog/${post.slug}`,
+    },
+  };
+  return `<script type="application/ld+json">${JSON.stringify(data)}</script>`;
+}
+```
+
+## How it's used
+
+- **Cairn** — Person JSON-LD on the landing page; BlogPosting on each `/blog/:slug`
+- **Pattern generalizes** to any portfolio, blog, product, or event page
+
+## Gotchas
+
+- **Exactly one JSON-LD block per entity.** Multiple `Person` blocks confuse crawlers. One authoritative block per page.
+- **JSON.stringify is fine — no HTML escaping needed** because it's inside `<script>` (not an HTML attribute). Exception: `</script>` in a string would break the tag. If your data contains arbitrary user text, replace `</` with `<\/` as a defensive measure.
+- **Test with Google's Rich Results Test.** Paste a URL or your HTML; it tells you what Google sees and why any fields are rejected.
+- **`sameAs` is the most-forgotten useful field.** It links your on-site identity to external profiles (GitHub, LinkedIn, Twitter). Helps Google stitch identity across the web.
+- **`datePublished` vs `dateModified`.** Only set `dateModified` when the content actually changes meaningfully; toggling it on every small edit hurts freshness signals.
+- **Don't duplicate what's in meta tags.** Schema.org is *additional* context, not a replacement for `<title>`, `<meta description>`, or Open Graph tags. Ship both.
+- **Breadcrumb schema is separate.** `BreadcrumbList` is its own type; worth adding for deep pages (blog > post).
+- **Keep it plain JSON.** Some guides suggest single-quote-escape tricks or trailing commas. Stick to strict JSON; some parsers reject anything else.
+
+## See also
+
+- [patterns/markdown-blog-from-filesystem](../markdown-blog-from-filesystem/) — the data this schema describes
+- [patterns/rss-and-sitemap-generation](../rss-and-sitemap-generation/) — the other SEO pattern Cairn ships

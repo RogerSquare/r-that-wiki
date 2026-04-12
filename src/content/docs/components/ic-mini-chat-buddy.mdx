@@ -1,0 +1,84 @@
+---
+title: IC-mini chat buddy
+description: An ASCII mascot that sits on the SSH portfolio and drops mildly unhelpful remarks.
+---
+
+import ICMiniChatBuddy from '../../../examples/ic-mini-chat-buddy.tsx';
+
+> **Source:** [cairn](https://github.com/RogerSquare/cairn) — portfolio's SSH mascot
+> **Category:** Decorative / character
+
+**IC-mini** — the portfolio's resident ASCII chatbot. Shows up next to section headings, says snarky but friendly things, periodically cycles to a new remark. Originally a one-off joke; stuck around because the portfolio was too dry without it.
+
+## What it is
+
+An ASCII mascot drawn next to a speech bubble. The bubble cycles through a hardcoded list of snarks on a timer (or on keystroke). Optionally connected to a local Ollama model for context-aware responses — that's the roadmap, not the current state.
+
+## Why it exists
+
+A terminal portfolio can feel cold. The content is structured, the layout is clean, but there's no personality. IC-mini adds a tiny amount of it without demanding real effort — the user reads whatever it says and moves on.
+
+The trade-off: a chat buddy in a portfolio is dorky. That's fine. Portfolios are allowed to be dorky.
+
+## Live
+
+<ICMiniChatBuddy client:load />
+
+## Implementation sketch
+
+```tsx
+const snarks = [
+  "You typed ssh r-that.com? On purpose? Bold.",
+  "Have you considered that you could be doing literally anything else right now?",
+  "I'm a chat buddy. I exist. That's about the extent of my ambitions.",
+  // ...
+];
+
+function ICMini() {
+  const [i, setI] = useState(() => Math.floor(Math.random() * snarks.length));
+
+  // Cycle every 12 seconds on idle
+  useEffect(() => {
+    const t = setInterval(() => setI(prev => (prev + 1) % snarks.length), 12_000);
+    return () => clearInterval(t);
+  }, []);
+
+  return (
+    <Box>
+      <MascotAscii />
+      <TextBubble>{snarks[i]}</TextBubble>
+    </Box>
+  );
+}
+```
+
+ASCII mascot:
+
+```
+  ___
+ |o o|
+ (_-_)
+ /| |\
+```
+
+(In Ink, wrap in `<Text color="cyan">`; in HTML, `<pre>` with matching color.)
+
+## How it's used
+
+- **Cairn (SSH)** — IC-mini appears on a handful of sections, rotates snarks
+- **Pattern generalizes** only loosely — the "tiny mascot with personality" idea is portable, the specific character isn't
+
+## Gotchas
+
+- **Keep it brief.** Multi-sentence snarks fight with the section content for attention. One-liners are the right scale.
+- **No infinite typing animation.** It's a sidebar character; a streaming effect on every rotation is exhausting.
+- **Timing.** Too fast (5s per rotation) = visual noise. Too slow (60s) = never changes. 10-15s is the sweet spot.
+- **ASCII mascot has opinions about terminal fonts.** Looks great in fixed-width fonts; becomes a Rorschach test in proportional ones. Browser version should always wrap in `<pre>` or explicitly set `font-family: monospace`.
+- **Don't AI-generate the lines at request time.** Latency, cost, unpredictable quality. Hand-write the list; refresh it once in a while.
+- **Avoid topical jokes.** Snarks tied to current events age badly. Stick to evergreen "you're on my portfolio, I'm a mascot, here we are" humor.
+- **Accessibility.** The mascot is a screen-reader nightmare (ASCII art + personality). Mark the `<pre>` with `aria-hidden="true"` and let the text bubble carry the message.
+
+## See also
+
+- [projects/cairn](../../projects/cairn/)
+- [components/streaming-text](../streaming-text/) — sibling "decorative-but-minimal" animation

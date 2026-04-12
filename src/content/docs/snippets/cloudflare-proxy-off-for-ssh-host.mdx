@@ -1,0 +1,57 @@
+---
+title: Cloudflare proxy off for the SSH host
+description: If your root domain resolves to a box that also accepts SSH on port 22, the orange cloud has to be off. Here's why.
+---
+
+> **Source:** `r-that.com` DNS setup (grey-cloud root, orange-cloud subdomains)
+> **Category:** Snippet — DNS / deploy
+
+**Proxy off for SSH hosts** — Cloudflare's proxy (orange cloud) only handles a handful of TCP ports. SSH on port 22 isn't one of them. If the same hostname also serves SSH, leave the proxy **off** (grey cloud); accept that port 80/443 on that hostname is direct-to-origin and you'll handle TLS yourself.
+
+## What it is
+
+A DNS configuration rule, not code. When a hostname has two purposes — a web server on 80/443 *and* an SSH server on 22 — Cloudflare's proxy can only protect one of them. You have to pick.
+
+## Why it exists
+
+**The problem:** You registered `r-that.com`, pointed the A record at your VPS, and enabled Cloudflare's proxy for free TLS and DDoS protection. Web traffic works; `ssh r-that.com` hangs or refuses the connection.
+
+Cloudflare's proxy intercepts HTTP/HTTPS traffic. SSH (port 22) is outside that scope — on free/pro plans, Cloudflare only proxies ports 80, 443, 2052, 2053, 2082, 2083, 2086, 2087, 2095, 2096, 8080, 8443, 8880. Port 22 isn't in the list. With the proxy on, DNS points to Cloudflare edge IPs; Cloudflare refuses to forward SSH; the connection fails.
+
+**The fix:** grey cloud the root record. DNS resolves to your origin IP directly. Port 22 works. Ports 80 and 443 also work — but Cloudflare is no longer providing TLS termination on that hostname, so either:
+1. Serve HTTP only on that hostname (accept the "not secure" badge), or
+2. Install Let's Encrypt / an Origin Cert on your VPS and terminate TLS there
+
+## Layout
+
+```
+Cloudflare DNS for r-that.com:
+  r-that.com          A   <VPS-IP>   grey cloud (DNS only)     ← root, SSH works here
+  wiki.r-that.com     A   <VPS-IP>   orange cloud (proxied)    ← subdomain, Cloudflare TLS
+  photos.r-that.com   A   <VPS-IP>   orange cloud (proxied)    ← subdomain, Cloudflare TLS
+```
+
+The root hosts the web portfolio (HTTP only or with origin cert) *and* the SSH portfolio. Subdomains that don't need SSH can stay proxied.
+
+## How it's used
+
+- **Cairn** — `r-that.com` is grey cloud so `ssh r-that.com` works on port 22; web traffic hits the Node server on port 80 directly
+- **Pattern applies** to any domain that mixes SSH with web serving
+
+## Gotchas
+
+- **Confirm the cloud color.** The "orange/grey cloud" button is small and easy to miss in the Cloudflare DNS UI. Confirm via `dig r-that.com` — if you see Cloudflare IPs (104.21.x, 172.67.x), you're proxied. If you see your VPS IP, you're not.
+- **No free HTTPS on a grey-cloud root.** Direct-to-origin means your VPS has to handle TLS. Options:
+  - **HTTP only** (not secure badge) — fine for non-sensitive content
+  - **Let's Encrypt with certbot** — free, automatic, works on any Linux box
+  - **Cloudflare Origin Certificate** — Cloudflare gives you a cert that's only trusted between Cloudflare edge and your origin. Doesn't help here because there's no proxy to validate it.
+- **Subdomains can be orange.** The SSH conflict is per-host. `wiki.r-that.com` with orange cloud is fine because nothing there needs SSH.
+- **DDoS protection disappears on the grey-cloud host.** Proxy was doing more than TLS — it was filtering traffic. Direct-to-origin means the VPS sees every SYN packet. For low-volume sites this is fine; for high-profile, consider other mitigation (cloud provider's firewall, fail2ban).
+- **Cloudflare Spectrum proxies SSH** on Enterprise and Business plans. Not relevant for personal projects; noted for completeness.
+- **If you really want orange cloud + SSH**, you can run SSH on a subdomain that's grey (e.g. `ssh.r-that.com`) and keep the root orange. Slightly awkward but works: `ssh ssh.r-that.com`.
+- **Non-standard SSH port doesn't help.** Cloudflare's port list is for proxied ports; everything else is direct-to-origin regardless. A different SSH port doesn't change this; it just changes the user's command.
+
+## See also
+
+- [projects/cairn](../../projects/cairn/) — where this setup ships
+- [patterns/cloudflare-flexible-tls-for-http-origin](../../patterns/cloudflare-flexible-tls-for-http-origin/) — the companion SSL-mode pattern for the *proxied* subdomains
