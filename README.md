@@ -1,49 +1,62 @@
-# Starlight Starter Kit: Basics
+# rog-wiki
 
-[![Built with Starlight](https://astro.badg.es/v2/built-with-starlight/tiny.svg)](https://starlight.astro.build)
+Deep-dive entries on components, patterns, and code snippets used across my projects. Deployed at [wiki.r-that.com](https://wiki.r-that.com).
 
-```
-npm create astro@latest -- --template starlight
-```
+Built with [Astro Starlight](https://starlight.astro.build/) + MDX + React. Static output, no backend.
 
-> 🧑‍🚀 **Seasoned astronaut?** Delete this file. Have fun!
+## Running locally
 
-## 🚀 Project Structure
-
-Inside of your Astro + Starlight project, you'll see the following folders and files:
-
-```
-.
-├── public/
-├── src/
-│   ├── assets/
-│   ├── content/
-│   │   └── docs/
-│   └── content.config.ts
-├── astro.config.mjs
-├── package.json
-└── tsconfig.json
+```bash
+npm install
+npm run dev      # http://localhost:4321
+npm run build    # produces ./dist
 ```
 
-Starlight looks for `.md` or `.mdx` files in the `src/content/docs/` directory. Each file is exposed as a route based on its file name.
+## Structure
 
-Images can be added to `src/assets/` and embedded in Markdown with a relative link.
+```
+src/
+├── content/docs/
+│   ├── index.mdx              # landing page
+│   ├── components/            # UI primitives and composite components
+│   ├── patterns/              # architectural patterns
+│   ├── snippets/              # useful code fragments
+│   └── projects/              # per-project architecture tours
+└── examples/                  # simplified, self-contained component sources
+```
 
-Static assets, like favicons, can be placed in the `public/` directory.
+## Adding a new entry
 
-## 🧞 Commands
+1. Pick the right section (`components/`, `patterns/`, `snippets/`, `projects/`)
+2. Create a new `.mdx` file. Frontmatter:
+   ```yaml
+   ---
+   title: The thing
+   description: One-line for search and hover
+   ---
+   ```
+3. Start with a `> Source:` line linking to the canonical code
+4. Write the entry in this order — this is the teaching order:
+   - **What it is** — one sentence
+   - **Why it exists** — the backstory (this is the most useful section for future-you)
+   - **Live** — `<Component client:load />` if renderable in a browser
+   - **Code** — the core of the idea (not the whole file)
+   - **How it's used** — bulleted list of projects + call sites
+   - **Gotchas** — what breaks, what surprises, what to avoid
+5. If the entry has a live render, add a `src/examples/<name>.tsx` with a simplified version of the component. Provenance comment at the top:
+   ```ts
+   // Source: <repo>/<path>
+   // Simplified for the wiki: removed <specific app-contextual things>
+   ```
 
-All commands are run from the root of the project, from a terminal:
+See `src/content/docs/components/btn-icon.mdx` for the canonical shape.
 
-| Command                   | Action                                           |
-| :------------------------ | :----------------------------------------------- |
-| `npm install`             | Installs dependencies                            |
-| `npm run dev`             | Starts local dev server at `localhost:4321`      |
-| `npm run build`           | Build your production site to `./dist/`          |
-| `npm run preview`         | Preview your build locally, before deploying     |
-| `npm run astro ...`       | Run CLI commands like `astro add`, `astro check` |
-| `npm run astro -- --help` | Get help using the Astro CLI                     |
+## Conventions
 
-## 👀 Want to learn more?
+- Examples are **teaching artifacts**, not mirrors. Simplify ruthlessly — drop auth wiring, error boundaries, telemetry, app-specific providers. Keep the shape of the idea.
+- Write the *why* more than the *what*. Code already shows what.
+- When in doubt, update an existing entry and add to "How it's used" instead of creating a new entry.
 
-Check out [Starlight’s docs](https://starlight.astro.build/), read [the Astro documentation](https://docs.astro.build), or jump into the [Astro Discord server](https://astro.build/chat).
+## Deployment
+
+Static build deployed to `/var/www/wiki` on the VPS, served by nginx at `wiki.r-that.com`. See `feat-wiki-deploy-001` in the Atrium task board for the infra details.
