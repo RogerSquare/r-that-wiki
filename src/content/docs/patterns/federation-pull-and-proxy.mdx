@@ -1,0 +1,93 @@
+---
+title: Federation by pull-and-proxy
+description: Two Artifex instances share galleries by having each expose a read-only API and proxy the other's assets through its own auth.
+---
+
+> **Source:** [artifex/backend/routes/federation.js](https://github.com/RogerSquare/Artifex/blob/main/backend/routes/federation.js)
+> **Category:** Pattern — multi-instance
+
+**Federation by pull-and-proxy** — each Artifex instance exposes a read-only subset of its API at `/federation/*`. Peers configure each other's URLs and a shared token. To show remote images, a local instance fetches the remote index and proxies asset downloads through its own auth layer — clients never talk to peers directly.
+
+## What it is
+
+No ActivityPub, no Fediverse protocol. Just two servers that:
+1. Each maintain a list of trusted peers (URL + shared token)
+2. Expose a `/federation/images` endpoint that returns a read-only image feed
+3. Expose a `/federation/proxy/:peerId/:imageId/:variant` that, given a remote image id, fetches the bytes from the peer and streams them to the client
+4. The frontend treats remote images like local ones — the proxy URL is just a URL
+
+## Why it exists
+
+**The problem:** Two people run Artifex for their own galleries. They want to:
+1. **Share their favorite images with each other** — without one of them logging into the other's instance
+2. **Browse each other's galleries from their own UI** — same keyboard shortcuts, same filters, same experience
+3. **Not trust the network in between** — the client should always be authenticated to its own local instance
+
+Classic federation protocols (ActivityPub, Nostr) are overkill — they solve identity, moderation, and content distribution at internet scale. Two people sharing photos don't need that.
+
+**The fix:** mutual pull. Each instance proxies the other's assets through its own auth. No cross-origin, no third-party cookies, no protocol overhead. When the relationship breaks (deleted account, server down), both sides gracefully degrade.
+
+## Shape
+
+```js
+// Server-side: expose a read-only feed
+router.get('/federation/images', requireFederationToken, async (req, res) => {
+  const images = await listImages({ visibility: 'public', limit: 500 });
+  res.json({
+    peer: { name: PEER_NAME, id: PEER_ID },
+    images: images.map(i => ({
+      id: i.id,
+      title: i.title,
+      width: i.width,
+      height: i.height,
+      thumbnail_url: `/federation/proxy/${PEER_ID}/${i.id}/thumbnail`,
+      // no absolute URL — clients go through their own local proxy
+    })),
+  });
+});
+
+// Client-side (same codebase, different instance): fetch a peer's feed
+async function syncPeer(peer) {
+  const res = await fetch(`${peer.url}/federation/images`, {
+    headers: { 'X-Federation-Token': peer.token },
+  });
+  const data = await res.json();
+  return data.images;       // cache for a few minutes
+}
+
+// Proxy route: download from a peer, auth with the local user
+router.get('/federation/proxy/:peerId/:imageId/:variant', requireAuth, async (req, res) => {
+  const peer = findPeer(req.params.peerId);
+  if (!peer) return res.status(404).end();
+
+  const remote = await fetch(
+    `${peer.url}/images/${req.params.imageId}/${req.params.variant}`,
+    { headers: { 'X-Federation-Token': peer.token } }
+  );
+  if (!remote.ok) return res.status(remote.status).end();
+
+  res.set('Content-Type', remote.headers.get('content-type'));
+  remote.body.pipe(res);
+});
+```
+
+## How it's used
+
+- **Artifex** — instances configured with peer URLs sync each other's public galleries
+- **Pattern generalizes** to any two-or-three-instance federation where full ActivityPub would be overkill
+
+## Gotchas
+
+- **Tokens are per-pair, not global.** Each peer relationship has its own token. Rotating one doesn't affect others. Treat tokens as secrets; load from env.
+- **Only `visibility: public` crosses the wire.** Private images stay on their origin. Make sure the federation-feed query explicitly filters — the default of "all images" is a disaster.
+- **The proxy route costs bandwidth on both sides.** Your server downloads from the peer, then uploads to the client. If your pipes are slow, federated browsing feels slow. A shared Cloudflare R2 or similar cache in front of the peer helps.
+- **Cache the feed.** Calling `/federation/images` on every page load hammers the peer. 5-minute cache, invalidate on a "refresh" button.
+- **Dead peers need graceful degradation.** If a peer is offline, the UI should show remote images as cached or unavailable — not 500. Surface a peer-status panel in admin.
+- **Version drift.** Two instances running different code may disagree on the feed's JSON shape. Version the federation API (`/federation/v1/images`) from day one.
+- **Audit logging.** Federation requests are a different threat surface. Log peer-token-based requests separately from user-token-based ones; they get different rate limits.
+- **Deletion propagation isn't automatic.** If the peer deletes an image, your cached version lingers. Re-fetching the feed catches deletions; handle 404s gracefully in the proxy route.
+
+## See also
+
+- [projects/artifex](../../projects/artifex/) — running instance of this pattern
+- [patterns/python-ml-subprocess](../python-ml-subprocess/) — peer-scale ML, not federation

@@ -1,0 +1,83 @@
+---
+title: Compare view
+description: Two images, side-by-side or slider overlay. The pattern for "which one looks better".
+---
+
+import CompareView from '../../../examples/compare-view.tsx';
+
+> **Source:** [artifex/frontend/src/components/CompareView.jsx](https://github.com/RogerSquare/Artifex/blob/main/frontend/src/components/CompareView.jsx)
+> **Category:** Composite component
+
+**Compare view** — two images, one toolbar, two display modes. Side-by-side is the default — both images visible, equal width. Slider mode overlays them with a draggable divider that reveals more of one or the other. Same pattern every photo-comparison tool uses (Lightroom, TestRabbit, etc.) because it just works.
+
+## What it is
+
+A toolbar with a mode toggle, a canvas that renders either two panels (side mode) or one panel with a `clip-path` overlay (slider mode). Both images are loaded at full resolution so the comparison is fair.
+
+## Why it exists
+
+When you've generated the same prompt twice with different seeds, or regenerated an existing image with tweaked parameters, the natural question is "which one do I keep". Side-by-side is good for coarse differences; slider is good for fine detail (noise levels, subtle changes at the same point).
+
+## Live
+
+<div style={{ padding: 16, background: '#020617', borderRadius: 8 }}>
+  <CompareView client:load />
+</div>
+
+Demo uses gradient squares; real Artifex loads actual images from the gallery.
+
+## Slider implementation
+
+The slider mode uses CSS `clip-path` on the top image — no canvas, no pixel manipulation, no WebGL:
+
+```jsx
+{/* Bottom image */}
+<div style={{ position: 'absolute', inset: 0 }}>
+  <img src={imageA} />
+</div>
+
+{/* Top image, clipped to the right of the slider */}
+<div style={{ position: 'absolute', inset: 0, clipPath: `inset(0 0 0 ${sliderPos}%)` }}>
+  <img src={imageB} />
+</div>
+
+{/* Divider handle */}
+<div
+  onPointerDown={(e) => {
+    e.currentTarget.setPointerCapture(e.pointerId);
+    const startX = e.clientX;
+    const startPos = sliderPos;
+    const move = (ev) => {
+      const rect = containerRef.current.getBoundingClientRect();
+      const dx = ((ev.clientX - startX) / rect.width) * 100;
+      setSliderPos(Math.max(0, Math.min(100, startPos + dx)));
+    };
+    e.currentTarget.addEventListener('pointermove', move);
+    e.currentTarget.addEventListener('pointerup', () => {
+      e.currentTarget.removeEventListener('pointermove', move);
+    }, { once: true });
+  }}
+  style={{ position: 'absolute', top: 0, bottom: 0, left: `${sliderPos}%`, width: 2, background: 'white', cursor: 'ew-resize' }}
+/>
+```
+
+## How it's used
+
+- **Artifex** — launch from the gallery with two selected images, or from the photo viewer's "compare with..." button
+- **Pattern generalizes** to any side-by-side diff: before/after photos, design iterations, experiment results
+
+## Gotchas
+
+- **Images must be the same dimensions** for the slider to make sense. Artifex resizes both to the smaller one for display; raw comparison needs a warning banner if aspect ratios differ.
+- **Sync zoom/pan.** If the user can zoom, both images zoom identically. Two independent zooms make the comparison invalid.
+- **Slider handle has to be on top.** A common bug: the divider renders behind the clipped image, so you can't grab it at the edges. `z-index` or DOM order: handle last.
+- **Use `pointer` events, not `mouse`.** Touchscreens also compare things. `pointerdown` / `pointermove` / `pointerup` cover all input modalities.
+- **Keyboard support.** Arrow keys should nudge the slider (e.g. 1% per press, 10% with shift). Without it, the UI is mouse-only.
+- **`clip-path: inset(...)` is fast.** Tempting to re-implement with canvas or SVG; don't. CSS clip-path is GPU-accelerated on every modern browser.
+- **Mid-drag doesn't need 60fps updates.** Throttle `pointermove` to RAF; otherwise React re-renders the whole tree on every pixel.
+- **Zoom out-of-sync on window resize.** If the user resizes while zoomed, both images need to recompute the display transform or the comparison drifts.
+
+## See also
+
+- [components/photo-viewer](../photo-viewer/) — sibling single-image view
+- [projects/artifex](../../projects/artifex/)

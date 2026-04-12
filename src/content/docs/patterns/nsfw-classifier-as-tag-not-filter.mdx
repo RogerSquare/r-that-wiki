@@ -1,0 +1,84 @@
+---
+title: NSFW classifier as a tag, not a filter
+description: Run the classifier; store the label; let the user decide what "NSFW" means in their gallery.
+---
+
+> **Source:** [artifex/backend/jobs/nsfw.js](https://github.com/RogerSquare/Artifex)
+> **Category:** Pattern — ML integration
+
+**NSFW as tag, not filter** — the ML model emits a probability score; your app stores it as metadata. Don't block uploads, don't auto-hide, don't delete. The user's filter UI (or per-collection settings) decides what to do with the tag. Treat the classifier as a *signal*, not an *enforcer*.
+
+## What it is
+
+Three choices, explicit:
+1. **Run the classifier at upload time** — output a score (0.0–1.0) or a label (`safe`, `suggestive`, `explicit`)
+2. **Store the raw output** as a column or tag on the image, alongside content tags and caption
+3. **Render the gallery with an NSFW filter toggle** — off by default or on, user's call
+
+That's it. The classifier never blocks an upload. It never hides an image on its own. It just adds data to the record.
+
+## Why it exists
+
+**The problem:** "NSFW filtering" sounds straightforward; in practice every approach is wrong for some reasonable user:
+
+- **Auto-hide flagged images** — false positives hide the user's own content from themselves
+- **Block uploads** — users can't explain they're building a gallery of renaissance art, which the classifier reads as nudity
+- **Delete or quarantine** — destructive, unpredictable, enraging
+- **Ignore the signal entirely** — misses the legitimate use (shared gallery with family)
+
+**The fix:** separate *detection* from *policy*. Detection is a data-extraction step — same shape as tagging or captioning. Policy is a UI concern that varies per user, per collection, per audience.
+
+## Shape
+
+```js
+// Detection: runs in the job queue, same shape as other ML jobs
+async function runNsfwJob(imageId) {
+  const image = await db.getImage(imageId);
+  const buffer = await readFile(image.file_path);
+  const result = await classifier.classify(buffer);   // { safe: 0.82, suggestive: 0.15, explicit: 0.03 }
+
+  await db.updateImage(imageId, {
+    nsfw_safe: result.safe,
+    nsfw_suggestive: result.suggestive,
+    nsfw_explicit: result.explicit,
+    nsfw_primary: pickHighest(result),                // string label
+  });
+}
+
+// Policy: happens in the UI
+function shouldHide(image, userSettings) {
+  if (userSettings.nsfwFilter === 'off') return false;
+  if (userSettings.nsfwFilter === 'blur')
+    return image.nsfw_explicit > 0.5;
+  if (userSettings.nsfwFilter === 'hide')
+    return image.nsfw_explicit > 0.5 || image.nsfw_suggestive > 0.7;
+  return false;
+}
+```
+
+Three policy modes:
+- **Off** — show everything. Good for a personal, private gallery
+- **Blur** — hide thumbnails behind a click-to-reveal. Good for mixed-audience galleries
+- **Hide** — don't render at all. Good for "family viewing" mode
+
+## How it's used
+
+- **Artifex** — classifier runs in the upload job queue, alongside tag and caption jobs; gallery offers blur/hide toggles per user
+- **Pattern generalizes** to any ML classification where the user's intent varies: spam detection, "is this a duplicate", sentiment labels
+
+## Gotchas
+
+- **Don't claim accuracy.** NSFW classifiers are noisy. A renaissance nude, a medical illustration, a beach photo all trigger the model. Users need to know the signal is *suggestive*, not definitive.
+- **Thresholds are user-tunable.** `0.5` for explicit, `0.7` for suggestive are reasonable defaults, not absolutes. Expose the slider in admin.
+- **Don't leak detection in URLs.** `image.png?nsfw=1` in a link reveals the classification to anyone with access to URLs. Keep it in the DB only.
+- **Model provenance matters.** Open-source NSFW classifiers have been trained on non-consensual data in some cases. Pick a model with a documented training source.
+- **Re-classification.** If you change models (new NSFW detector), you need to re-run on the entire gallery. Budget for this.
+- **False-negative cost is real.** An explicit image leaking through your classifier into a shared family album is a real user harm. Default to `blur`, not `off`, for shared contexts.
+- **Keep the raw scores, not just the label.** "Explicit" with confidence 0.51 is barely flagged; with 0.95 is certain. Store both, let the UI choose the cutoff.
+- **Moderation is not the same as NSFW detection.** Copyrighted content, CSAM, harassment are separate signals needing separate tools and usually actual human moderation. Don't conflate.
+
+## See also
+
+- [projects/artifex](../../projects/artifex/)
+- [patterns/python-ml-subprocess](../python-ml-subprocess/) — the other ML signal (tags, captions) follows the same "detection, not policy" shape
+- [patterns/sqlite-job-queue](../sqlite-job-queue/) — where the NSFW job runs

@@ -1,0 +1,80 @@
+---
+title: Upload zone
+description: Drag-and-drop file picker with a per-file progress list. Queued → uploading → processing → done.
+---
+
+import UploadZone from '../../../examples/upload-zone.tsx';
+
+> **Source:** [artifex/frontend/src/components/UploadZone.jsx](https://github.com/RogerSquare/Artifex/blob/main/frontend/src/components/UploadZone.jsx)
+> **Category:** Form
+
+**Upload zone** — the canonical drag-and-drop box plus a list of items below it showing size, progress bar, and status badge. Each item moves through four states: `queued`, `uploading`, `processing` (when ML jobs run), `done` (or `error`).
+
+## What it is
+
+A dropzone that accepts drags from the desktop or from a file picker on click. Files added to the queue upload in parallel with a concurrency cap. The UI tracks:
+- **Upload progress** (XHR progress event percentage)
+- **Processing status** (polled or pushed via socket — ML jobs finishing)
+- **Final state** (done / error / duplicate)
+
+## Why it exists
+
+Users don't want to upload one file at a time, and they don't want a single global progress bar for 50 files. The per-file list shows which files succeeded, which are mid-upload, which hit the server but are still waiting for derivatives to generate.
+
+Visible distinction between "uploading" (bytes in flight) and "processing" (server-side work) matters because the file is already "out of the user's hands" during processing — they can walk away.
+
+## Live
+
+<div style={{ padding: 20, background: '#020617', borderRadius: 8 }}>
+  <UploadZone client:load />
+</div>
+
+Demo is static; real Artifex wires this to `fetch` with progress events plus a socket listener for the `job_completed` event.
+
+## Upload flow
+
+```jsx
+async function uploadFile(file, onProgress) {
+  const form = new FormData();
+  form.append('file', file);
+
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', '/api/images');
+    xhr.upload.addEventListener('progress', e => {
+      if (e.lengthComputable) onProgress(e.loaded / e.total);
+    });
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) resolve(JSON.parse(xhr.responseText));
+      else reject(new Error(xhr.statusText));
+    };
+    xhr.onerror = () => reject(new Error('network'));
+    xhr.send(form);
+  });
+}
+```
+
+Why `XMLHttpRequest` and not `fetch`? `fetch` doesn't emit upload progress events. There's a proposed `fetch` streams API for this, but XHR is still the portable answer in 2026.
+
+## How it's used
+
+- **Artifex** — the primary path to add images to the gallery
+- **Pattern generalizes** to any app accepting user file uploads: file sharing, backup tools, CMS editors
+
+## Gotchas
+
+- **Drag-over flicker.** `dragover` fires on child elements too, causing the "hovered" styling to flash as the pointer moves across nested children. Fix: counter on dragenter/dragleave, or `pointer-events: none` on children while dragging.
+- **`preventDefault` on `dragover` and `drop`.** Without it, the browser opens the dropped file instead of handing it to your handler. Root cause of 90% of "why doesn't my dropzone work" bugs.
+- **Concurrency cap.** Don't let 50 uploads go in parallel — they'll starve each other and the server. 3-5 concurrent is a good default.
+- **Client-side validation before upload.** Check file type, size, maybe run a quick `createImageBitmap` to reject broken files — cheaper to reject on the client than to upload 50MB of garbage.
+- **Progress = upload bytes, not processing.** The upload progress bar completes at 100% while ML jobs are still running. Showing "done" at 100% is a lie; show "processing" until the server confirms.
+- **Error recovery.** Retry button per failed item. Don't auto-retry silently — errors often indicate something the user needs to address (file too big, invalid format).
+- **Clear the queue on page unload.** Without a `beforeunload` warning, users navigate away mid-upload and lose files silently. Warn if queue is non-empty.
+- **Server idempotency.** If the upload times out at 99%, the user retries, and both eventually complete, you get a duplicate. Server should dedupe by file hash.
+- **Drag from the browser itself** (drag an image from another tab) works but the file is re-fetched, which can fail on CORS. Gracefully handle the failure.
+
+## See also
+
+- [patterns/sqlite-job-queue](../../patterns/sqlite-job-queue/) — where the "processing" phase runs
+- [patterns/python-ml-subprocess](../../patterns/python-ml-subprocess/) — what makes processing take a while
+- [patterns/sharp-image-pipeline](../../patterns/sharp-image-pipeline/) — part of processing

@@ -1,0 +1,100 @@
+---
+title: FFmpeg video frame extraction for thumbnails
+description: Pick a representative frame N seconds into the video, pipe through Sharp, done.
+---
+
+> **Source:** [artifex/backend/jobs/video-thumb.js](https://github.com/RogerSquare/Artifex)
+> **Category:** Pattern — media
+
+**FFmpeg frame extraction** — videos need thumbnails too. Spawn ffmpeg, tell it to extract a single frame N seconds in, pipe the frame through Sharp to match the same thumbnail pipeline as images. One command, one frame, one static preview for your gallery.
+
+## What it is
+
+One `spawn` call to ffmpeg. Arguments pick the input, the seek time, a single-frame output. Stdout gets the raw image; pipe to Sharp (or write to disk). The result looks identical to an image thumbnail — the gallery doesn't care whether the source was a `.mp4` or a `.png`.
+
+## Why it exists
+
+**The problem:** A gallery with videos needs previews. Options:
+
+1. **Play the video muted in the tile** — expensive to render, bad on mobile data
+2. **Show a `<video>` poster with the first frame** — first frame is often black or a studio logo
+3. **Extract a frame at a meaningful timestamp** — small, fast, representative
+
+**The fix:** option (3). Pick 1.5 seconds or 10% of duration, whichever is smaller. That usually lands past any intro blackness and still feels like the video's content.
+
+## Shape
+
+```js
+import { spawn } from 'child_process';
+import sharp from 'sharp';
+
+async function extractFrame(videoPath, outputPath, seekSeconds = 1.5) {
+  return new Promise((resolve, reject) => {
+    const ff = spawn('ffmpeg', [
+      '-ss', String(seekSeconds),  // seek BEFORE -i for fast seeking
+      '-i', videoPath,
+      '-vframes', '1',             // one frame
+      '-f', 'image2pipe',          // output to pipe
+      '-c:v', 'mjpeg',             // JPEG encoding for the pipe
+      '-q:v', '2',                 // high quality
+      '-',                         // stdout
+    ]);
+
+    const chunks = [];
+    ff.stdout.on('data', c => chunks.push(c));
+    ff.on('close', async (code) => {
+      if (code !== 0) return reject(new Error(`ffmpeg exited ${code}`));
+      const buf = Buffer.concat(chunks);
+      await sharp(buf).resize({ width: 256 }).webp({ quality: 75 }).toFile(outputPath);
+      resolve(outputPath);
+    });
+    ff.on('error', reject);
+  });
+}
+```
+
+For smarter seeking (percentage of duration):
+
+```js
+import ffprobe from 'ffprobe-static';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
+
+const execFileP = promisify(execFile);
+
+async function getDuration(videoPath) {
+  const { stdout } = await execFileP(ffprobe.path, [
+    '-v', 'error', '-show_entries', 'format=duration',
+    '-of', 'default=noprint_wrappers=1:nokey=1', videoPath,
+  ]);
+  return parseFloat(stdout.trim());
+}
+
+async function smartSeek(videoPath) {
+  const duration = await getDuration(videoPath);
+  return Math.min(1.5, duration * 0.1);   // earlier of: 1.5s or 10%
+}
+```
+
+## How it's used
+
+- **Artifex** — video uploads get a frame extracted at upload time, same `.thumbnail.webp` / `.preview.webp` / `.full.webp` derivatives as images
+- **Pattern generalizes** to any app accepting video uploads: blogs, social apps, portfolio sites
+
+## Gotchas
+
+- **`-ss` placement matters for speed.** Before `-i`: ffmpeg seeks in the container without decoding — fast. After `-i`: ffmpeg decodes every frame up to the seek point — slow. Use before-input whenever you can.
+- **Seeking to 0s can fail.** Some containers have issues seeking to the absolute first frame. Start at 0.5s minimum; fall back to 0 if that fails.
+- **File format support.** ffmpeg handles everything; user uploads can still surprise you. Wrap in try/catch, log ffmpeg's stderr, fall back to a placeholder thumbnail on failure.
+- **`-vframes 1` is the cheap "get one frame" trick.** Don't ask ffmpeg to decode and re-encode more than you need.
+- **`image2pipe` + `mjpeg` is the simplest pipe format.** Sharp reads JPEG; ffmpeg writes JPEG; pipe in between. PNG pipes work too but are bigger.
+- **ffmpeg path.** On Windows, shipping ffmpeg as a binary dep via `@ffmpeg-installer/ffmpeg` saves users from installing it separately. Downside: adds ~50MB to your node_modules.
+- **Timeouts.** Long videos can make ffmpeg hang on malformed streams. Add a `setTimeout` that kills the child after e.g. 30s.
+- **Don't scale with ffmpeg if Sharp is coming next.** ffmpeg's scaler is fine but Sharp's quality knobs are better. Let ffmpeg give you the raw frame at original resolution; do the downscale in Sharp.
+- **Memory.** A single 4K video frame is ~25MB uncompressed, ~2MB as JPEG. Fine. A 60-frame burst is 1.5GB uncompressed. Don't extract more than you need.
+
+## See also
+
+- [patterns/sharp-image-pipeline](../sharp-image-pipeline/) — the derivative pipeline frames flow into
+- [patterns/python-ml-subprocess](../python-ml-subprocess/) — sibling subprocess pattern; ffmpeg is Python ML's cousin here
+- [patterns/sqlite-job-queue](../sqlite-job-queue/)

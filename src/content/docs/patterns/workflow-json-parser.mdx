@@ -1,0 +1,99 @@
+---
+title: ComfyUI workflow JSON parser
+description: Image metadata contains the entire generation graph. Normalize it so the UI can show prompt, model, sampler, and steps regardless of which tool produced it.
+---
+
+> **Source:** [artifex/backend/lib/metadata.js](https://github.com/RogerSquare/Artifex) · [components/metadata-panel](../../components/metadata-panel/)
+> **Category:** Pattern — parsing
+
+**Workflow JSON parser** — AI image generators (ComfyUI, Automatic1111, InvokeAI, Forge) embed generation metadata in the output file. Each tool uses a different shape, each version shifts keys. A small normalizer reads the raw JSON and extracts the common fields (prompt, model, sampler, steps, CFG, seed) for display.
+
+## What it is
+
+One function per source format. Each returns the same canonical `{prompt, negative_prompt, model, sampler, steps, cfg_scale, seed, ...}` object. The caller doesn't care where the image came from; the UI always has the same shape to render.
+
+## Why it exists
+
+**The problem:** Image metadata is wildly inconsistent:
+
+- **Automatic1111** stores a single text blob in the PNG's `parameters` field: `"a dog, high quality\nNegative prompt: blurry\nSteps: 20, Sampler: Euler, CFG scale: 7, Seed: 123, Model: sd_xl_base..."`
+- **ComfyUI** stores a full execution graph as JSON in `prompt` (inputs) and `workflow` (canvas) fields — node IDs, connections, values
+- **InvokeAI** uses its own schema with different field names
+- **Someone's custom tool** stores a dict with completely novel keys
+
+Rendering raw metadata is hostile. Without normalization, a gallery is a dozen different UIs glued together.
+
+**The fix:** one parser per format. A detector picks the right one. The output is canonical.
+
+## Shape
+
+```js
+// Top-level detector + dispatcher
+function parseMetadata(raw) {
+  if (typeof raw === 'string' && raw.includes('Steps:')) {
+    return parseA1111(raw);
+  }
+  if (raw?.prompt && typeof raw.prompt === 'object') {
+    return parseComfyUI(raw);
+  }
+  if (raw?.invokeai_metadata) {
+    return parseInvokeAI(raw.invokeai_metadata);
+  }
+  return null;        // unknown source — render as raw
+}
+
+function parseA1111(text) {
+  const lines = text.split('\n');
+  const prompt = lines[0];
+  const negMatch = text.match(/Negative prompt: (.+?)(?:\n|$)/);
+  const steps = text.match(/Steps: (\d+)/)?.[1];
+  const sampler = text.match(/Sampler: ([^,]+)/)?.[1]?.trim();
+  const cfg = text.match(/CFG scale: ([\d.]+)/)?.[1];
+  const seed = text.match(/Seed: (\d+)/)?.[1];
+  const model = text.match(/Model: ([^,]+)/)?.[1]?.trim();
+  return { prompt, negative_prompt: negMatch?.[1] ?? '', steps: +steps, sampler, cfg_scale: +cfg, seed, model };
+}
+
+function parseComfyUI(workflow) {
+  // Walk the graph: find KSampler nodes, their inputs, trace back through CLIPTextEncode
+  const nodes = Object.values(workflow.prompt);
+  const sampler = nodes.find(n => n.class_type === 'KSampler');
+  if (!sampler) return null;
+
+  const promptText = findConnectedNodeText(nodes, sampler.inputs?.positive);
+  const negativeText = findConnectedNodeText(nodes, sampler.inputs?.negative);
+  const modelNode = findConnectedNode(nodes, sampler.inputs?.model);
+
+  return {
+    prompt: promptText,
+    negative_prompt: negativeText,
+    steps: sampler.inputs?.steps,
+    cfg_scale: sampler.inputs?.cfg,
+    seed: sampler.inputs?.seed,
+    sampler: sampler.inputs?.sampler_name,
+    model: modelNode?.inputs?.ckpt_name,
+    // keep the raw graph for "advanced view"
+    workflow_raw: workflow,
+  };
+}
+```
+
+## How it's used
+
+- **Artifex** — metadata extracted at upload time, normalized into DB columns; the MetadataPanel renders from the canonical shape
+- **Pattern generalizes** to any "multiple upstream tools, one downstream display" situation: log parsers, CI artifact readers, vendor SDKs
+
+## Gotchas
+
+- **Keep the raw JSON too.** Store `metadata_raw` alongside the canonical fields. When a user's tool doesn't fit any known parser, the raw blob is the escape hatch — and when you add a new parser later, you can re-process old images.
+- **Version tolerance.** ComfyUI changes node names between versions. `KSampler` becomes `KSamplerAdvanced`; `CheckpointLoaderSimple` gets renamed. Detection by class name needs a list of aliases, not a single string.
+- **Missing fields are normal.** Some generations have no seed (img2img with random), no CFG (some samplers ignore it), or no negative prompt. Default to `null`, not `0` — `0` is a valid CFG value that looks like missing data.
+- **Unicode in A1111 text.** Automatic1111 sometimes double-encodes Unicode in the metadata string. Try `Buffer.from(raw, 'latin1').toString('utf8')` as a fallback if characters look wrong.
+- **PNG metadata read cost.** `sharp(file).metadata()` is cheap for dimensions; the full text chunks need `png-chunks-extract` or similar. Skip the full read unless the user asks for details.
+- **Comfy workflow graphs can be huge.** Some have 100+ nodes. Don't log them verbatim; log a summary.
+- **Don't trust `model` strings.** Users rename checkpoint files to gibberish. Treat model names as informational, not canonical. Hash the file for true identity if you need dedupe.
+
+## See also
+
+- [projects/artifex](../../projects/artifex/)
+- [components/metadata-panel](../../components/metadata-panel/) — the UI that reads this output

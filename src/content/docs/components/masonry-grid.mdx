@@ -1,0 +1,91 @@
+---
+title: Masonry grid
+description: Pinterest-style columns, each image keeps its aspect ratio. CSS-columns first; reach for virtualization only when you have thousands of tiles.
+---
+
+import MasonryGrid from '../../../examples/masonry-grid.tsx';
+
+> **Source:** [artifex/frontend/src/components/GalleryGrid.jsx](https://github.com/RogerSquare/Artifex/blob/main/frontend/src/components/GalleryGrid.jsx)
+> **Category:** Layout
+
+**Masonry grid** — N columns, each with its own vertical flow. Tall images take more column space; short images fit more into a column. Better for mixed aspect ratios than a strict square grid; better than infinite scroll for browsing dense content.
+
+## What it is
+
+Two implementations are common:
+1. **CSS columns** (`column-count`, `break-inside: avoid`) — zero JS, zero config. Browser handles layout. Simpler. Good up to a few hundred items.
+2. **Virtualized absolute-position** (`@tanstack/react-virtual`) — each tile's position computed manually, only visible ones rendered. Required for 1000+ items or when performance matters on mobile.
+
+Artifex uses CSS columns until the gallery grows, then switches to virtualized.
+
+## Why it exists
+
+AI-generated images vary in aspect ratio — 1:1 squares, 2:3 portraits, 16:9 landscapes, wildly different heights. A strict square grid crops or letterboxes. A masonry grid respects every image's shape, which is what users actually want when browsing a personal gallery.
+
+## Live
+
+<div style={{ padding: 8, background: '#000', borderRadius: 8 }}>
+  <MasonryGrid client:load />
+</div>
+
+Demo uses gradient tiles; real Artifex renders `<img src={thumbnailUrl}>` with `loading="lazy"`.
+
+## CSS-columns version
+
+```jsx
+function GalleryGrid({ images, columns = 4 }) {
+  return (
+    <div style={{ columnCount: columns, columnGap: 8 }}>
+      {images.map(img => (
+        <div key={img.id} style={{ breakInside: 'avoid', marginBottom: 8 }}>
+          <img src={img.thumbnail_url} width="100%" loading="lazy" />
+        </div>
+      ))}
+    </div>
+  );
+}
+```
+
+## Virtualized version (sketch)
+
+```jsx
+import { useVirtualizer } from '@tanstack/react-virtual';
+
+function VirtualMasonry({ images, columns = 4 }) {
+  const parentRef = useRef(null);
+  const cols = Array.from({ length: columns }, () => ({ items: [], height: 0 }));
+
+  // Distribute items to columns by shortest-first
+  images.forEach(img => {
+    const shortest = cols.reduce((min, c, i, arr) =>
+      c.height < arr[min].height ? i : min, 0);
+    cols[shortest].items.push(img);
+    cols[shortest].height += img.displayHeight;
+  });
+
+  // Virtualize each column independently...
+}
+```
+
+Much more code. Only do this when the CSS-columns version lags.
+
+## How it's used
+
+- **Artifex** — main gallery view; column count responsive to viewport (1 on mobile, 5 on wide desktop)
+- **Pattern generalizes** to any image-heavy listing: moodboards, portfolios, any dashboard
+
+## Gotchas
+
+- **Tiles flow top-to-bottom per column, not left-to-right.** The reading order is "down column 1, then down column 2, …". For chronological feeds this is often wrong; use a grid if time-ordering matters.
+- **`break-inside: avoid`** is mandatory. Without it, the browser can split a tile across columns (images clipped in half).
+- **Column count from viewport width.** Small phone: 1 or 2 columns. Tablet: 3. Desktop: 4-5. Ultrawide: 6-7. Match by `@media` or resize observer.
+- **Lazy-load thumbnails.** `loading="lazy"` on `<img>`. Without it, opening a 500-image gallery triggers 500 simultaneous requests.
+- **Aspect ratio placeholder.** Use `aspect-ratio` CSS to reserve space before the image loads; otherwise the grid reflows and scroll position jumps.
+- **Drag-reorder is hard in CSS columns.** The flow order isn't the DOM order in a straightforward way. If you need drag-to-reorder, switch to a virtualized grid.
+- **Click targets on small tiles.** Images below ~60px become hard to tap. Keep a minimum tile size and either remove columns or switch to grid at very narrow viewports.
+- **Masonry CSS proposal.** The CSS `grid-template-rows: masonry` is proposed but not widely shipped as of 2026. When it lands, CSS-columns + break-inside becomes obsolete.
+
+## See also
+
+- [projects/artifex](../../projects/artifex/)
+- [patterns/sharp-image-pipeline](../../patterns/sharp-image-pipeline/) — where the thumbnails come from

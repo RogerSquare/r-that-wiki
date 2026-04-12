@@ -1,0 +1,96 @@
+---
+title: Sharp image pipeline (originals + derivatives)
+description: Keep the original untouched. Derive thumbnails and preview sizes at upload time, cache on disk, serve by size.
+---
+
+> **Source:** [artifex/backend/jobs/derivatives.js](https://github.com/RogerSquare/Artifex)
+> **Category:** Pattern — media
+
+**Sharp image pipeline** — original files go in one directory untouched. At upload time, generate a handful of derivative sizes (thumbnail, preview, full) using [Sharp](https://sharp.pixelplumbing.com/) and store them alongside. The API serves the right size per request so browsers don't download 10MB for a 200px thumbnail.
+
+## What it is
+
+A small job in your upload pipeline:
+1. User uploads `image.jpg` → written to `uploads/originals/<id>.jpg`
+2. Sharp job reads the original, emits three outputs: `thumbnail.webp` (256px), `preview.webp` (1024px), `full.webp` (2048px)
+3. Routes like `/images/:id/thumbnail`, `.../preview`, `.../full`, `.../original` serve the right file
+
+Original is gold; derivatives are disposable (regenerate if the format/pipeline changes).
+
+## Why it exists
+
+**The problem:** Without derivatives, every gallery tile downloads the full-resolution image. A grid of 40 images at 5MB each = 200MB on first page load. Mobile users run out of data; desktop users wait for a long time.
+
+**The fix:** pre-generate scaled versions. WebP cuts file size 30-40% over JPEG at similar quality. One-time CPU cost at upload; ongoing savings on every view.
+
+## Shape
+
+```js
+import sharp from 'sharp';
+import { mkdir, writeFile } from 'fs/promises';
+import path from 'path';
+
+const SIZES = {
+  thumbnail: { width: 256,  quality: 75 },
+  preview:   { width: 1024, quality: 82 },
+  full:      { width: 2048, quality: 86 },
+};
+
+async function deriveVariants(originalPath, imageId, outDir) {
+  await mkdir(outDir, { recursive: true });
+  const input = sharp(originalPath, { failOn: 'none' }).rotate();   // auto-orient EXIF
+
+  const results = {};
+  for (const [name, { width, quality }] of Object.entries(SIZES)) {
+    const output = path.join(outDir, `${imageId}.${name}.webp`);
+    await input
+      .clone()
+      .resize({ width, withoutEnlargement: true })
+      .webp({ quality, effort: 4 })
+      .toFile(output);
+    results[name] = output;
+  }
+  return results;
+}
+```
+
+Serving:
+
+```js
+router.get('/images/:id/:size', async (req, res) => {
+  const image = await db.getImage(req.params.id);
+  const size = req.params.size;
+  if (!['thumbnail', 'preview', 'full', 'original'].includes(size))
+    return res.status(400).end();
+
+  const variant = size === 'original'
+    ? image.original_path
+    : path.join(DERIVED_DIR, `${image.id}.${size}.webp`);
+
+  res.set('Cache-Control', 'public, max-age=31536000, immutable');
+  res.sendFile(variant);
+});
+```
+
+## How it's used
+
+- **Artifex** — thumbnail in the grid, preview in the photo viewer, full for the fullscreen/compare views, original only on "download" clicks
+- **Pattern generalizes** to any app with user-uploaded images and performance-conscious display
+
+## Gotchas
+
+- **`rotate()` before resize.** EXIF orientation flags are metadata — raw pixel data isn't rotated. Without `rotate()` first, some phone photos come out sideways.
+- **`failOn: 'none'`.** Sharp defaults to erroring on malformed images; `failOn: 'none'` lets it best-effort process anyway. Users upload partial PNGs, truncated JPEGs, etc.
+- **`withoutEnlargement: true`.** If the original is already 512px wide, don't upscale it to the 1024px preview size. Upscale looks bad and wastes space.
+- **WebP quality knobs matter.** `quality: 82, effort: 4` is the sweet spot for preview sizes. `effort: 6` gives tiny extra savings but triples encode time.
+- **AVIF is better compression, worse support.** WebP hits 98%+ of browsers in 2026; AVIF is catching up. Emit WebP unless you need the extra savings and are willing to ship multiple formats.
+- **Animated GIFs need special handling.** Sharp can convert to animated WebP; test carefully. Otherwise treat as video (single-frame derivative + link to original).
+- **Regenerate derivatives if you change the pipeline.** Bumping quality from 75 to 82 means every thumbnail now looks worse than it should. Background re-deriving is usually fine; keep the old files until new ones exist.
+- **Originals get huge.** 10k×10k images from Midjourney hit 50MB+. Your disk plan has to handle this. Compress at rest if needed, but don't delete — the original is the source of truth.
+- **`immutable` cache only works if filenames include a version hash.** `image-123.thumbnail.webp` can change content without a URL change, and `immutable` cache would pin the stale version. Either include a hash in the filename or accept `max-age` without `immutable`.
+
+## See also
+
+- [projects/artifex](../../projects/artifex/)
+- [patterns/ffmpeg-video-frame-extraction](../ffmpeg-video-frame-extraction/) — sibling pipeline for video
+- [patterns/sqlite-job-queue](../sqlite-job-queue/) — where the derivation job runs

@@ -1,0 +1,53 @@
+---
+title: Photo viewer
+description: Full-screen image view with zoom, pan, favorite, collections, share, and an optional metadata sidebar.
+---
+
+import PhotoViewer from '../../../examples/photo-viewer.tsx';
+
+> **Source:** [artifex/frontend/src/components/PhotoViewer.jsx](https://github.com/RogerSquare/Artifex/blob/main/frontend/src/components/PhotoViewer.jsx)
+> **Category:** Composite component
+
+**Photo viewer** — Artifex's fullscreen image view. Two-row toolbar (actions on top, zoom/info on the bottom), an image canvas with pan + zoom, and an optional metadata sidebar showing prompt/model/sampler/seed. Keyboard-driven: arrows navigate, +/- zoom, I toggles info.
+
+## What it is
+
+A right-hand-side panel (or fullscreen overlay on mobile) that opens when a user clicks a gallery thumbnail. Shows one image at a time with quick actions (favorite, add-to-collection, share, download, delete). The info sidebar reads from the image's normalized [workflow JSON](../../patterns/workflow-json-parser/) data.
+
+## Why it exists
+
+A gallery without a detail view is a gallery you can't use. The viewer exists to answer "what is this image" — dimensions, generation params, tags, comments — and to let you act on it without leaving the flow.
+
+Two-row toolbar pattern: primary actions (favorite, share, delete) on top; viewport actions (zoom, info) on the bottom. Separating them prevents the "where was that button" problem in a busy toolbar.
+
+## Live
+
+<div style={{ padding: 16, background: '#020617', borderRadius: 8 }}>
+  <PhotoViewer client:load />
+</div>
+
+The demo's image is a CSS-gradient square; real Artifex renders the image itself (with a progressive-loading placeholder).
+
+## How it's used
+
+- **Artifex** — opened from any gallery click; URL-routable (`/photo/:id`)
+- **Pattern generalizes** to any image-viewer app (not limited to AI galleries)
+
+## Gotchas
+
+- **Zoom applied as CSS `transform: scale()`, not `width/height`.** Transform is GPU-accelerated and smooth; width/height triggers layout on every pixel of change.
+- **Pan needs pointer capture.** Without `element.setPointerCapture(e.pointerId)` on pointerdown, a drag that leaves the element stops receiving move events mid-stroke.
+- **Preloading next/prev.** On arrow-key nav, the next image needs to already be loaded. Inject `<link rel="prefetch">` for the next/prev preview URL when the viewer opens.
+- **Toolbar button states.** "Favorite" should flip optimistically and revert on API failure. Otherwise every click feels laggy waiting for the round trip.
+- **Delete confirmation.** Single-key delete is a user-hostile default. Require confirmation, or a hold-to-delete with a progress indicator.
+- **Info sidebar doesn't always fit.** On mobile, overlay the info as a bottom sheet instead of a sidebar. Single component handling both responsive modes is more work than two components sharing the state.
+- **Keyboard shortcuts conflict with browser defaults.** `Cmd+F` for favorite conflicts with find; `Cmd+Shift+F` is better but unintuitive. Document the shortcuts visibly.
+- **Mid-zoom resize.** Window resize during zoom shouldn't reset the zoom level, only re-center the image.
+- **Metadata is optional.** Not every image has workflow JSON (imported files, screenshots). Render a "no generation data" state gracefully.
+
+## See also
+
+- [components/compare-view](../compare-view/) — sibling two-image view
+- [components/metadata-panel](../metadata-panel/) — the sidebar content (broken out for reuse)
+- [components/btn-icon](../btn-icon/) — the toolbar button primitive
+- [patterns/workflow-json-parser](../../patterns/workflow-json-parser/) — where the metadata comes from
