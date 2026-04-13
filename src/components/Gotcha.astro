@@ -1,0 +1,85 @@
+---
+/**
+ * <Gotcha> — a callout for high-severity caveats that deserve more than a bullet.
+ *
+ * Variants: 'warning' (default), 'danger', 'performance', 'security'.
+ *
+ * Usage:
+ *   import Gotcha from '../../../components/Gotcha.astro';
+ *   <Gotcha title="Migration order is load-bearing">
+ *     Back up live data BEFORE the first git pull, or the seed will overwrite admin edits.
+ *   </Gotcha>
+ */
+
+interface Props {
+  title?: string;
+  variant?: 'warning' | 'danger' | 'performance' | 'security';
+}
+
+const { title = 'Gotcha', variant = 'warning' } = Astro.props;
+
+const palette = {
+  warning:     { accent: 'var(--brand-accent)', label: 'Gotcha' },
+  danger:      { accent: '#ef4444',             label: 'Danger' },
+  performance: { accent: '#60a5fa',             label: 'Performance' },
+  security:    { accent: '#a78bfa',             label: 'Security' },
+}[variant];
+---
+
+<aside class={`gotcha gotcha-${variant}`} role="note">
+  <div class="header">
+    <span class="dot" aria-hidden="true"></span>
+    <span class="kind">{palette.label}</span>
+    {title && title !== 'Gotcha' && <span class="title">· {title}</span>}
+  </div>
+  <div class="body">
+    <slot />
+  </div>
+</aside>
+
+<style define:vars={{ accent: palette.accent }}>
+  .gotcha {
+    margin: 1.5em 0;
+    padding: 0.9em 1.1em;
+    border-radius: 8px;
+    border: 1px solid var(--sl-color-hairline);
+    border-left: 3px solid var(--accent);
+    background: var(--wiki-card-bg);
+    font-size: 0.95em;
+  }
+  .header {
+    display: flex;
+    align-items: center;
+    gap: 0.4em;
+    margin-bottom: 0.4em;
+    font-size: 0.78rem;
+    font-family: 'DM Mono', ui-monospace, Menlo, monospace;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+  }
+  .kind {
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .title {
+    color: var(--sl-color-gray-3);
+    text-transform: none;
+    letter-spacing: 0;
+    font-family: var(--sl-font);
+    font-size: 0.92rem;
+    font-weight: 500;
+  }
+  .body {
+    color: var(--sl-color-text);
+    line-height: 1.6;
+  }
+  .body :global(p:last-child) {
+    margin-bottom: 0;
+  }
+</style>

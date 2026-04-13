@@ -10,7 +10,7 @@ The short version: **write for future-you at 2 AM, not for strangers**. You alre
 Required sections, in this order:
 
 1. **Frontmatter** — `title`, `description` (search uses these)
-2. **`> Source:` line** — links to the canonical code. Always first, above any prose.
+2. **Source reference** — links to the canonical code. Always first, above any prose. Use the `<SourceRef>` component (see below) for a polished metadata strip, or the older `> **Source:** ...` blockquote if you prefer plain markdown.
 3. **What it is** — one sentence. No more.
 4. **Why it exists** — the backstory. What was there before? What problem did it solve? This is the highest-value section; don't skimp.
 5. **Live** — `<Component client:load />` if the thing is browser-renderable
@@ -44,6 +44,49 @@ Example files are **teaching artifacts**, not mirrors of production code.
   ```
 
 Drift between the example and the real source is fine. The entry teaches the *idea*, not the exact current implementation.
+
+## Components you can import
+
+The wiki ships a few Astro components you can import into any MDX entry.
+
+### `<SourceRef>` — the top-of-entry metadata strip
+
+```mdx
+import SourceRef from '../../../components/SourceRef.astro';
+
+<SourceRef
+  repo="atrium"
+  path="backend/lib/projectRegistry.js"
+  commit="9f24423"
+  category="Pattern — identity"
+/>
+```
+
+Renders as an amber-tinted pill with a GitHub icon, clickable path, commit SHA badge, and category label. Alternative: `<SourceRef href="..." label="..." />` for links outside GitHub.
+
+### `<Gotcha>` — high-severity callouts
+
+```mdx
+import Gotcha from '../../../components/Gotcha.astro';
+
+<Gotcha title="Migration order is load-bearing">
+  Back up live data BEFORE the first `git pull`, or the seed will overwrite admin edits.
+</Gotcha>
+```
+
+Variants: `warning` (default, amber), `danger` (red), `performance` (blue), `security` (purple). Use sparingly — `<Gotcha>` is for the one or two caveats per entry that most deserve a reader's attention. Ordinary gotchas stay as bullet points.
+
+### Starlight's built-in `<Aside>`
+
+For general callouts (note, tip, caution, danger), Starlight's built-in `<Aside>` works and is already styled to match the theme:
+
+```mdx
+import { Aside } from '@astrojs/starlight/components';
+
+<Aside type="tip" title="Optional title">
+  The actual content.
+</Aside>
+```
 
 ## Tone
 

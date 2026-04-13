@@ -633,3 +633,107 @@ starlight-sidebar,
   border-radius: 8px;
   margin: 1.5em 0;
 }
+
+/* =========================================================================
+ * 21. MOTION + TRANSITIONS
+ * ========================================================================= */
+
+html {
+  scroll-behavior: smooth;
+  scroll-padding-top: calc(var(--sl-nav-height) + 1rem);
+}
+
+/* Respect users who've opted out of motion */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Deep-link anchor highlight — briefly flash the heading you linked to */
+.sl-markdown-content :target {
+  animation: target-flash 1.6s ease-out;
+}
+@keyframes target-flash {
+  0%   { background: var(--brand-accent-subtle); }
+  100% { background: transparent; }
+}
+
+/* =========================================================================
+ * 22. MOBILE REFINEMENTS
+ * ========================================================================= */
+
+@media (max-width: 768px) {
+  :root {
+    /* Slightly smaller base font on phones */
+    --sl-text-base: 15px;
+    --sl-text-4xl: 32px;   /* big h1 shrinks */
+    --sl-text-2xl: 22px;
+    --sl-content-width: 100%;
+  }
+
+  .sl-markdown-content h2 {
+    margin-top: 2em;
+  }
+
+  /* Source-ref / asides wrap cleanly on narrow widths */
+  .source-ref {
+    font-size: 0.72rem;
+    padding: 0.4rem 0.65rem;
+  }
+
+  /* Tables scroll horizontally if they overflow; add an edge shadow to hint */
+  .sl-markdown-content table {
+    display: block;
+    overflow-x: auto;
+    white-space: nowrap;
+    -webkit-overflow-scrolling: touch;
+    position: relative;
+  }
+
+  /* Code blocks: horizontal scroll with edge hint */
+  .expressive-code pre {
+    padding: 0.75em 1em !important;
+    font-size: 13px !important;
+  }
+
+  /* Breadcrumbs on mobile — smaller + ellipsis on overflow */
+  .crumbs ol {
+    font-size: 0.7rem;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .crumbs ol::-webkit-scrollbar { display: none; }
+
+  /* Sidebar links: keep touch targets at least 44px */
+  .sidebar-content a {
+    padding: 0.55em 0.85em !important;
+    min-height: 36px;
+    display: flex;
+    align-items: center;
+  }
+}
+
+/* Tap highlight on iOS Safari — muted amber instead of default blue blob */
+a, button {
+  -webkit-tap-highlight-color: var(--brand-accent-subtle);
+}
+
+/* =========================================================================
+ * 23. FIRST-PAINT OPTIMIZATIONS
+ * ========================================================================= */
+
+/* Avoid font-swap layout shift — size-adjust the fallback to match Inter */
+@font-face {
+  font-family: 'Inter-fallback';
+  size-adjust: 107%;
+  ascent-override: 90%;
+  src: local('Arial');
+}

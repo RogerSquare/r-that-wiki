@@ -1,0 +1,105 @@
+---
+/**
+ * Breadcrumbs rendered from the current URL path.
+ * Maps slugs to readable labels for the top-level sections.
+ */
+
+const pathname = Astro.url.pathname;
+const parts = pathname
+  .replace(/^\/+|\/+$/g, '')
+  .split('/')
+  .filter(Boolean);
+
+const SECTION_LABELS: Record<string, string> = {
+  components: 'Components',
+  patterns:   'Patterns',
+  snippets:   'Snippets',
+  projects:   'Projects',
+  meta:       'Meta',
+};
+
+function labelFor(slug: string, isLeaf: boolean): string {
+  if (SECTION_LABELS[slug]) return SECTION_LABELS[slug];
+  // For slugs like "cairn-data-dir", reveal as-is (entry titles already kebab-cased)
+  return isLeaf
+    ? slug                                 // leaf: keep kebab form as identifier
+    : slug.replace(/-/g, ' ');
+}
+
+const crumbs: { href: string; label: string; isLast: boolean }[] = [];
+let accum = '';
+parts.forEach((part, i) => {
+  accum += '/' + part;
+  const isLast = i === parts.length - 1;
+  crumbs.push({ href: accum, label: labelFor(part, isLast), isLast });
+});
+
+// Don't render on the landing page or if there's only one crumb
+const shouldRender = crumbs.length > 1;
+---
+
+{shouldRender && (
+  <nav class="crumbs" aria-label="Breadcrumbs">
+    <ol>
+      <li>
+        <a href="/">Home</a>
+        <span class="sep" aria-hidden="true">›</span>
+      </li>
+      {crumbs.map((c) => (
+        <li>
+          {c.isLast ? (
+            <span class="current" aria-current="page">{c.label}</span>
+          ) : (
+            <>
+              <a href={c.href}>{c.label}</a>
+              <span class="sep" aria-hidden="true">›</span>
+            </>
+          )}
+        </li>
+      ))}
+    </ol>
+  </nav>
+)}
+
+<style>
+  .crumbs {
+    margin-bottom: 0.75rem;
+  }
+  .crumbs ol {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.1em;
+    font-family: 'DM Mono', ui-monospace, Menlo, monospace;
+    font-size: 0.75rem;
+    line-height: 1.4;
+  }
+  .crumbs li {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.1em;
+  }
+  .crumbs a {
+    color: var(--sl-color-gray-4);
+    text-decoration: none;
+    padding: 0.15em 0.3em;
+    border-radius: 3px;
+    transition: color 0.15s ease, background 0.15s ease;
+  }
+  .crumbs a:hover {
+    color: var(--brand-accent);
+    background: var(--brand-accent-subtle);
+  }
+  .crumbs .sep {
+    color: var(--sl-color-gray-5);
+    margin: 0 0.15em;
+    font-family: inherit;
+  }
+  .crumbs .current {
+    color: var(--sl-color-gray-2);
+    padding: 0.15em 0.3em;
+  }
+</style>

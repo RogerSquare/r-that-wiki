@@ -1,0 +1,12 @@
+---
+/**
+ * Override of Starlight's default PageTitle.
+ * Adds a breadcrumb trail above the H1.
+ */
+import type { Props } from '@astrojs/starlight/props';
+import Default from '@astrojs/starlight/components/PageTitle.astro';
+import Breadcrumbs from './Breadcrumbs.astro';
+---
+
+<Breadcrumbs />
+<Default {...Astro.props}><slot /></Default>
