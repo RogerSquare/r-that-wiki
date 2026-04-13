@@ -1,0 +1,102 @@
+---
+title: Audio mixer coordination — don't fight other audio
+description: When your plugin plays audio on a shared device, coordinate with other audio sources. Play nice with AudioLoader; duck on game sound; pause for voice chat.
+---
+
+> **Source:** [SDH-GameThemeMusic](../../projects/sdh-gamethememusic/) — AudioLoader integration
+> **Category:** Pattern — audio / Steam Deck
+
+**Audio mixer coordination** — on a shared audio device (Steam Deck, phone, any desktop), multiple apps want to play sound. Your plugin shouldn't blast theme music over a Discord call or stack with the game's own music. Duck, pause, defer — through whatever coordination primitive the platform offers.
+
+## What it is
+
+Before playing audio, check for:
+- **Other plugin audio** (e.g. AudioLoader also wants to play something)
+- **System audio state** (game paused? game playing its own theme?)
+- **User preference** (per-game override? "silence mode"?)
+
+During playback:
+- **Duck** (lower volume) when another source starts
+- **Pause** on user actions (focus lost, voice chat opened)
+- **Resume** when the conflict resolves
+
+After stopping:
+- **Release resources** (audio session, OS audio device lock)
+
+## Why it exists
+
+**The problem:** Your plugin's "theme music auto-play on game page" is delightful when the device is quiet. It's jarring when:
+
+1. User is on a Discord call; music blasts over the voice channel
+2. Another plugin plays a different track simultaneously → cacophony
+3. Game has its own opening theme → double tracks
+4. User stopped the music manually; it restarts on the next page load
+
+**The fix:** coordinate. The specifics vary per platform; the pattern is always "check before playing, adapt during playback, clean up after".
+
+## SDH-GameThemeMusic specifics (AudioLoader integration)
+
+Decky's AudioLoader plugin is the shared audio mixer. It exposes a JS API that other plugins register with:
+
+```ts
+// On plugin load
+if (window.AudioLoader) {
+  AudioLoader.registerMixerSource({
+    id: 'game-theme-music',
+    priority: 'low',                    // lower than voice chat, higher than silence
+    canDuck: true,
+    onDuckRequest: (level) => {
+      setVolume(level);                 // another source wants to play
+    },
+  });
+}
+
+// Before playing
+async function play(url: string) {
+  if (AudioLoader?.isExclusiveActive()) {
+    return;                              // something higher priority is playing
+  }
+
+  audioElement.src = url;
+  audioElement.volume = AudioLoader?.getDuckedLevel?.() ?? 1.0;
+  audioElement.play();
+}
+```
+
+AudioLoader exposes:
+- Mixer registration
+- Ducking levels (0.0-1.0) that react to other sources
+- "Exclusive mode" flags (for voice chat)
+- Fade in/out utilities
+
+Plugins that don't integrate just... play over everything.
+
+## Cross-platform equivalents
+
+- **macOS/iOS** — `AVAudioSession` with categories (`.playback`, `.ambient`); `interruptionNotification` for calls
+- **Android** — `AudioManager.requestAudioFocus()` / `AbandonAudioFocus()` with duck/pause callbacks
+- **Windows** — Windows.Media.Playback namespace; ISystemMediaTransportControls
+- **Web browsers** — no formal mixer; HTMLMediaElement + your own coordination
+
+## How it's used
+
+- **SDH-GameThemeMusic** — registers with AudioLoader, ducks on voice chat, pauses when the user manually pauses game audio
+- **Pattern generalizes** to any always-on-audio app (ambient music, notification sounds, game audio)
+
+## Gotchas
+
+- **Don't start audio at 100% volume.** Fade in over 500ms — users opening a page shouldn't be startled.
+- **Save the user's mute.** If they muted the theme once, don't auto-play again on the next game page. Per-game preference in plugin storage.
+- **Respect system mute.** iOS silent switch, Android DND mode, macOS "Do Not Disturb". Don't override; the user has spoken.
+- **Page transitions.** When the user navigates away, fade out (400ms) before stopping. Abrupt cuts are jarring.
+- **Memory on long playback.** Audio elements hold buffers; 30+ minute tracks can leak memory if not disposed. `audio.src = ''; audio.load();` releases the buffer.
+- **Duplicate events.** If the same page loads twice (Steam's UI sometimes does this), don't start two audio elements. Singleton pattern.
+- **Test in a voice call.** Best QA is joining a Discord call and loading the plugin. If the music interrupts the call, you have bugs.
+- **Volume normalization.** YouTube tracks vary wildly in volume. Apply a compressor or ReplayGain; consistent volume across games is table-stakes UX.
+- **Handoff to OS media controls.** On Android/iOS, populate the lock-screen media widget. Users expect to pause from there.
+
+## See also
+
+- [projects/sdh-gamethememusic](../../projects/sdh-gamethememusic/)
+- [patterns/decky-plugin-architecture](../decky-plugin-architecture/) — where this runs
+- [patterns/youtube-audio-extraction-fallbacks](../youtube-audio-extraction-fallbacks/) — how the audio got there

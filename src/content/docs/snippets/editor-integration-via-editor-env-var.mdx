@@ -1,0 +1,78 @@
+---
+title: Editor integration via $EDITOR
+description: Don't build an interactive CLI editor. Spawn the user's `$EDITOR` and let them use what they already know.
+---
+
+> **Source:** [mdtask](../../projects/mdtask/) — `mdtask edit <id>`
+> **Category:** Snippet — CLI UX
+
+**$EDITOR integration** — when your CLI needs the user to edit text (long task description, commit message, config), don't build an in-terminal text editor. Drop the content into a temp file, spawn whatever binary `$EDITOR` points to (vim, nano, code, emacs — user's choice), wait for the editor to exit, read the file back.
+
+## Shape
+
+```js
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const { spawnSync } = require('child_process');
+
+function editWithUserEditor(initialContent, extension = '.md') {
+  const tmpFile = path.join(os.tmpdir(), `mdtask-${Date.now()}${extension}`);
+  fs.writeFileSync(tmpFile, initialContent);
+
+  const editor = process.env.EDITOR
+               ?? process.env.VISUAL
+               ?? (process.platform === 'win32' ? 'notepad' : 'vi');
+
+  const result = spawnSync(editor, [tmpFile], {
+    stdio: 'inherit',               // gives the editor the terminal
+  });
+
+  if (result.status !== 0) {
+    fs.unlinkSync(tmpFile);
+    throw new Error(`${editor} exited with ${result.status}`);
+  }
+
+  const edited = fs.readFileSync(tmpFile, 'utf8');
+  fs.unlinkSync(tmpFile);
+  return edited;
+}
+```
+
+Usage:
+
+```js
+const task = loadTask(id);
+const edited = editWithUserEditor(task.body, '.md');
+if (edited !== task.body) {
+  task.body = edited;
+  saveTask(task);
+  console.log('Saved.');
+} else {
+  console.log('No changes.');
+}
+```
+
+## Why this pattern
+
+- **Every user already knows their editor.** Even 10-year-old junior devs have a muscle-memory editor. Your tool doesn't have to win a "great editor" competition.
+- **Syntax highlighting, search, autocomplete** — you get all of it for free from the real editor.
+- **Multi-cursor, vim plugins, fancy LSPs** — if they work in `$EDITOR`, they work in your CLI.
+- **Cancellation is natural.** Exit the editor without saving → empty or unchanged file → your tool preserves the original.
+
+## Gotchas
+
+- **`stdio: 'inherit'` is mandatory.** Without it, the editor has no terminal and crashes immediately. Common bug: a test harness that captures stdout and kills the editor.
+- **Editor exit code semantics vary.** `vim :q!` exits 0; most editors return 0 on normal close. Don't over-interpret non-zero exits.
+- **`$EDITOR` can be a command with args.** `EDITOR="code --wait"` is common for VS Code users. You can't just `spawn(editor, [file])` — the args get passed as one argv. Split on spaces (naive) or use `shell: true` (opens injection risk with user-controlled filenames).
+- **GUI editors need `--wait` or equivalent.** `code`, `subl`, `atom` return immediately without `--wait`; your CLI reads an unedited file. Document in your help: set `EDITOR="code --wait"`.
+- **Windows `notepad`.** Works but doesn't auto-wrap. `notepad++` is better. Respect `$EDITOR` first.
+- **Empty result on quit.** Editor may save an empty file if the user cleared content on purpose. Is that "delete" or "no change"? Prompt or define explicitly.
+- **Temp dir cleanup.** If your process crashes, the temp file leaks. `os.tmpdir()` gets garbage-collected by the OS eventually, but aim to clean up on normal paths.
+- **File extension matters for syntax highlighting.** Use `.md` for markdown, `.txt` for plain, `.json` for JSON. Editor auto-detects syntax from the extension.
+- **CRLF on Windows.** `fs.readFileSync` returns bytes as-is. If the user edited in Notepad, you get CRLF; mdtask should normalize to LF for consistency with other platforms.
+
+## See also
+
+- [projects/mdtask](../../projects/mdtask/)
+- [patterns/per-project-hidden-dir](../../patterns/per-project-hidden-dir/) — the companion CLI pattern

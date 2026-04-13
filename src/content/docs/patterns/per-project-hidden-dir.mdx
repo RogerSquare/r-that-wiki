@@ -1,0 +1,80 @@
+---
+title: Per-project hidden directory (.tasks, .git, .vscode)
+description: Find the nearest ancestor directory containing a known marker; use that as the scope. The `.git` lookup pattern applied to any tool.
+---
+
+> **Source:** [mdtask](../../projects/mdtask/) — `.tasks/` discovery
+> **Category:** Pattern — CLI / tooling
+
+**Per-project hidden directory** — the convention every good CLI tool uses to scope itself: a hidden directory (`.tasks/`, `.git/`, `.vscode/`, `node_modules/`) in the project root marks it. The tool walks up from the current working directory until it finds the marker, or runs out of parent directories.
+
+## What it is
+
+From whatever directory the user ran `mdtask` in, walk up through parent directories. If any contains `.tasks/`, that's the project root; read tasks from there. If you reach `/` (or `C:\` on Windows) without finding it, either create one in the current directory or prompt the user.
+
+This is how `git`, `nvm`, `rbenv`, `direnv`, `vscode`, and most CLI tooling discovers its scope.
+
+## Why it exists
+
+**The problem:** "Where do tasks live?" Three bad answers:
+
+1. **Global file** (`~/.mdtask.json`) — all projects share one list. You're typing "#project-name" into every task description to disambiguate.
+2. **Current working directory only** — run `mdtask` one level deep into your repo, it creates a fresh empty `.tasks/` because it didn't find the existing one.
+3. **Explicit path every time** (`mdtask --dir ~/myproject add ...`) — defeats the point of a CLI.
+
+**The fix:** walk up from CWD. Natural for users who understand `.git/` — every `git status` you've ever run worked this way.
+
+## Shape (Node)
+
+```js
+const fs = require('fs');
+const path = require('path');
+
+function findProjectRoot(startDir, marker = '.tasks') {
+  let dir = path.resolve(startDir);
+  while (true) {
+    if (fs.existsSync(path.join(dir, marker))) return dir;
+    const parent = path.dirname(dir);
+    if (parent === dir) return null;   // reached root
+    dir = parent;
+  }
+}
+
+const tasksRoot = findProjectRoot(process.cwd());
+if (!tasksRoot) {
+  console.log(`No .tasks/ found in ${process.cwd()} or any parent.`);
+  console.log(`Run 'mdtask init' in your project root.`);
+  process.exit(1);
+}
+
+const tasksDir = path.join(tasksRoot, '.tasks');
+```
+
+## Cross-filesystem check on Unix
+
+Real `git` stops at filesystem boundaries unless `GIT_DISCOVERY_ACROSS_FILESYSTEM=1`. For mdtask that's overkill; the simple version is fine.
+
+## How it's used
+
+- **mdtask** — `.tasks/` marker
+- **git** — `.git/`
+- **nvm / rbenv** — `.nvmrc` / `.ruby-version` (files, not dirs, same lookup pattern)
+- **direnv** — `.envrc`
+- **package managers** — `package.json`, `Cargo.toml`, `go.mod`
+- **Pattern generalizes** to any tool that wants per-project state
+
+## Gotchas
+
+- **Symlinks.** A symlinked directory is *not* the same location as its target. `path.resolve` + walk works correctly; relative paths get confusing if you don't normalize first.
+- **Permissions.** On multi-user systems, you might hit a parent directory you can't read. `fs.existsSync` returns `false` cleanly; don't throw on permission errors during the walk.
+- **Network filesystems (NFS, SMB).** Walk can stall briefly while the mount responds. Acceptable for a one-time lookup; problematic if you do it on every subcommand invocation. Cache the result.
+- **Home directory edge case.** Running `mdtask` from `~/` walks to `/` without finding a marker. That's correct — there's no project. Don't let the tool create a global `.tasks/` in `~/` just to have one.
+- **Race conditions.** A parallel `mdtask init` in two shells creates two `.tasks/` dirs at different levels. Rare but messy. First-write-wins via `mkdir` (which is atomic).
+- **`.git` collision.** What if the project has both `.git/` and `.tasks/` at different levels (e.g. a monorepo with workspace-level tasks)? Decide: innermost wins (most common), outermost wins (for repo-scope context), or configurable.
+- **Case sensitivity.** `.tasks` and `.Tasks` are different on Linux, same on macOS/Windows. Canonicalize to lowercase.
+
+## See also
+
+- [projects/mdtask](../../projects/mdtask/)
+- [patterns/markdown-as-database](../markdown-as-database/) — what lives inside the `.tasks/` directory
+- [patterns/cairn-data-dir](../cairn-data-dir/) — a different direction: env-var-configured, not ancestor-lookup

@@ -1,0 +1,91 @@
+---
+title: Decky Loader plugin architecture
+description: TypeScript/React frontend, Python backend — on-device, bridged by IPC. The shape every Decky plugin ships.
+---
+
+> **Source:** [SDH-GameThemeMusic](../../projects/sdh-gamethememusic/)
+> **Category:** Pattern — Steam Deck plugins
+
+**Decky plugin architecture** — Steam Deck's [Decky Loader](https://decky.xyz/) gives community plugins two halves: a TypeScript/React UI that renders inside Steam's game pages, and an optional Python backend that runs on the Deck with full filesystem/network access. IPC between them is a simple RPC. Both halves ship as one plugin package.
+
+## What it is
+
+```
+plugin/
+├── main.py                # Python backend (optional, often present)
+├── package.json           # frontend deps + build scripts
+├── src/
+│   ├── index.tsx          # plugin entry; renders into SteamOS UI
+│   ├── components/        # React components for the plugin UI
+│   └── api.ts             # typed wrappers around Decky RPC calls
+├── plugin.json            # metadata (name, author, description)
+└── build.sh / rollup config
+```
+
+The frontend is a React app that Decky injects into Steam's overlay when the plugin is loaded. The Python backend is optional — plugins that only tweak UI don't need it. When present, the backend runs in its own process on the Deck; the frontend calls it through Decky's IPC bridge.
+
+## Why the split exists
+
+- **Frontend has constraints.** It runs inside Steam's UI, uses Steam's React version, can only access what Steam exposes (plus Decky's injected APIs).
+- **Backend has freedom.** Python on the Deck can hit the network, shell out, read files outside the Steam environment. The frontend asks the backend when it needs that.
+- **Dev ergonomics.** Backend changes don't require redeploying the whole UI; frontend changes don't restart the Python process.
+
+## IPC shape
+
+```python
+# main.py
+class Plugin:
+    async def search_theme(self, game_name: str) -> str | None:
+        # Backend: hit YouTube, return audio URL
+        return search_youtube(f"{game_name} theme song")
+
+    async def _main(self):
+        # Called when Decky loads the plugin
+        pass
+
+    async def _unload(self):
+        # Called when Decky unloads the plugin
+        pass
+```
+
+```tsx
+// src/api.ts
+import { callBackendFunction } from 'decky-frontend-lib';
+
+export async function searchTheme(gameName: string): Promise<string | null> {
+  return callBackendFunction('search_theme', gameName);
+}
+```
+
+One-way RPC from frontend to backend. Backend functions are async Python coroutines; frontend calls them with `callBackendFunction`; result deserialized as JSON.
+
+## Lifecycle
+
+1. User enables plugin in Decky settings
+2. Decky loads `main.py`, calls `_main()`
+3. Decky injects the frontend bundle into Steam's UI
+4. User opens a game page; frontend renders its panel
+5. User interaction → frontend calls backend function
+6. On plugin disable: Decky calls `_unload()`, unmounts frontend
+
+## How it's used
+
+- **SDH-GameThemeMusic** — frontend renders the "Theme Music" section on game pages; backend handles YouTube search and audio URL extraction
+- **AudioLoader** — sibling audio plugin with similar shape
+- **Pattern generalizes** to any Decky plugin (audio, overlays, game tweaks, system utilities)
+
+## Gotchas
+
+- **Decky Loader API changes.** Major versions of Decky change frontend APIs. Plugins need updating; maintainer discipline matters. `decky-frontend-lib` version should match the Decky version you're targeting.
+- **Steam's React version.** The frontend runs with whatever React Steam's UI uses. You don't control the version. Libraries with peer-dep React constraints might not work.
+- **Python version on the Deck.** Comes with a specific Python version. Don't require newer syntax.
+- **No persistent state by default.** Plugin unload destroys backend state. For anything persistent (preferences, caches), write to disk under `~/.config/decky-<plugin>/`.
+- **Async blocks the UI thread.** Long-running backend calls freeze the plugin panel unless you add a loading state. Frontend should show spinners; backend should break up long work.
+- **Error handling.** Python exceptions in the backend bubble up as JS exceptions in the frontend. Handle with try/catch on the frontend side; show meaningful errors to the user.
+- **Testing.** Near-impossible to unit test the integration. Test Python logic standalone, React components in isolation, smoke-test together on actual hardware.
+- **Distribution.** Plugin store submission has its own review process. Test thoroughly before submitting; revision turnaround is measured in days.
+
+## See also
+
+- [projects/sdh-gamethememusic](../../projects/sdh-gamethememusic/)
+- [patterns/youtube-audio-extraction-fallbacks](../youtube-audio-extraction-fallbacks/) — the backend's main challenge

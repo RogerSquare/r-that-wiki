@@ -1,0 +1,94 @@
+---
+title: YouTube audio extraction — fallbacks
+description: YouTube's scrape surface changes frequently. Have two or three extraction methods; fall through when the first fails.
+---
+
+> **Source:** [SDH-GameThemeMusic](../../projects/sdh-gamethememusic/) — theme music resolution
+> **Category:** Pattern — resilience
+
+**YouTube audio extraction fallbacks** — YouTube regularly breaks the HTML/JS layout that scrapers rely on. Relying on one method means weekly breakage. Have two or three methods (library-based, binary-based, API-based); try in order; cache the working one. When one breaks, the others still work.
+
+## What it is
+
+A prioritized list of extractors. Each is a function taking a video URL and returning an audio stream URL (or null). The resolver tries them in order; first success wins. Configuration tracks which method last succeeded so ordering can adapt.
+
+## Why it exists
+
+**The problem:** YouTube is hostile to scrapers. They:
+
+1. Rotate the JS decryption signatures (`ytdl-core` lags)
+2. Gate some requests behind a SABR check (signature-based auth)
+3. Vary HTML structure (DOM scraping breaks)
+4. Throttle / rate-limit API-ish routes
+
+Pinning to one approach (say, `ytdl-core`) means your plugin breaks every time YouTube tweaks something. The release-fix-release cycle is stressful and user-visible.
+
+**The fix:** multiple methods. One breaks → try next. User sees degraded-but-working; you have time to fix the broken method on your own schedule.
+
+## Shape
+
+```python
+from typing import Optional, Callable
+
+async def via_ytdlp(url: str) -> Optional[str]:
+    # subprocess call to yt-dlp binary
+    try:
+        result = await run(['yt-dlp', '-x', '--get-url', url])
+        return result.stdout.strip()
+    except Exception:
+        return None
+
+async def via_ytdl_core(url: str) -> Optional[str]:
+    # ytdl-core (Node.js lib) called via subprocess or port
+    # ... implementation ...
+    return None
+
+async def via_invidious(url: str) -> Optional[str]:
+    # Invidious instance (community YouTube proxy)
+    # ... implementation ...
+    return None
+
+# Prioritized list
+EXTRACTORS: list[Callable] = [via_ytdlp, via_ytdl_core, via_invidious]
+
+async def get_audio_url(video_url: str) -> Optional[str]:
+    for extract in EXTRACTORS:
+        result = await extract(video_url)
+        if result:
+            # Cache which method succeeded; next call, try it first
+            return result
+    return None
+```
+
+## Which methods to stack
+
+In order of robustness (more robust first):
+
+1. **`yt-dlp` binary** — the community-maintained fork of youtube-dl. Updates frequently, handles edge cases the canonical library doesn't.
+2. **`ytdl-core` (Node) or `youtube-dl` library** — smaller dependency footprint; lags yt-dlp by days/weeks on fixes.
+3. **Invidious / Piped instance** — community YouTube proxies. Works when direct scraping fails; goes down when the instance does.
+4. **Direct HTML scrape** — brittle, for when nothing else works.
+
+Order matters for rate limits too: hit yt-dlp locally first (free), fall back to Invidious only if needed (shared infrastructure).
+
+## How it's used
+
+- **SDH-GameThemeMusic** — resolves YouTube URLs to audio stream URLs; the plugin ships with the yt-dlp binary and falls back to other methods on failure
+- **Pattern generalizes** to any scraper for a hostile API (not just YouTube — SoundCloud, Instagram, Twitter all need similar resilience)
+
+## Gotchas
+
+- **Ship the binary.** `yt-dlp` updates every few days. Either bundle a recent version with your plugin and auto-update, or require users to have it installed. Bundling is more reliable; auto-update requires network access at plugin load.
+- **Subprocess overhead.** Each extraction spawns a process. For one-off lookups it's fine; for batch resolution of 100 URLs, use the library version (in-process) first.
+- **Cache results.** A video's audio URL can be cached for the session (expires after hours). Don't re-resolve on every play.
+- **URL expiry.** Extracted stream URLs expire. Don't store them long-term; re-resolve when needed.
+- **Legal gray area.** YouTube's ToS technically forbids scraping audio. Personal/educational plugins have historically been left alone; commercial use is different.
+- **Safety on user-provided URLs.** If users paste arbitrary YouTube URLs, validate before passing to yt-dlp. Known-good URL shapes only.
+- **Invidious instances die.** The project is community-maintained; instances come and go. Keep a list of 3-5 instances; rotate if one fails.
+- **Differential behavior.** `yt-dlp --get-url` returns a direct audio stream; Invidious returns a proxied URL. Your player code has to handle both. Unify on a common interface.
+
+## See also
+
+- [projects/sdh-gamethememusic](../../projects/sdh-gamethememusic/)
+- [patterns/decky-plugin-architecture](../decky-plugin-architecture/) — where the extraction runs
+- [patterns/audio-mixer-coordination](../audio-mixer-coordination/) — what happens after extraction
