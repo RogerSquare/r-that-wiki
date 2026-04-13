@@ -1,189 +1,635 @@
 /*
- * rog-wiki theme
- * Matches r-that.com: near-black bg, amber accent, Inter + DM Mono, minimal chrome.
- * Overrides Starlight's default CSS custom properties.
- * Starlight theming docs: https://starlight.astro.build/guides/css-and-tailwind/#css-variables
+ * rog-wiki theme — refined
+ * Inspiration: developer.apple.com/documentation (restraint, whitespace, hierarchy)
+ * Brand: r-that.com (dark, amber accent #fdb32a, Inter + DM Mono)
+ *
+ * Principles:
+ *  - Amber only on interactive/active elements — never decorative
+ *  - Heavy lean on typography hierarchy, not color, to create structure
+ *  - 8px spacing grid
+ *  - Hairlines (1px borders), not heavy dividers
+ *  - Breathing room everywhere; reading is the point
  */
 
-/* Dark (default) */
+/* =========================================================================
+ * 1. COLOR TOKENS
+ * ========================================================================= */
+
 :root {
-  /* Brand accent — warm amber */
-  --brand-accent: #fdb32a;
-  --brand-accent-subtle: rgba(253, 179, 42, 0.12);
+  /* Brand */
+  --brand-accent:           #fdb32a;
+  --brand-accent-hover:     #ffc355;
+  --brand-accent-subtle:    rgba(253, 179, 42, 0.10);
+  --brand-accent-bg-tint:   rgba(253, 179, 42, 0.04);
 
-  /* Starlight accent — mapped to amber */
-  --sl-color-accent:      var(--brand-accent);
-  --sl-color-accent-high: #ffd271;
-  --sl-color-accent-low:  rgba(253, 179, 42, 0.18);
-  --sl-color-text-accent: var(--brand-accent);
+  /* Starlight accents → amber */
+  --sl-color-accent:        var(--brand-accent);
+  --sl-color-accent-high:   #ffd88a;
+  --sl-color-accent-low:    var(--brand-accent-subtle);
+  --sl-color-text-accent:   var(--brand-accent);
 
-  /* Surfaces */
-  --sl-color-bg:             #050505;
-  --sl-color-bg-nav:         #050505;
-  --sl-color-bg-sidebar:     #050505;
-  --sl-color-bg-inline-code: #151515;
+  /* Surfaces — near-black with subtle graduation */
+  --sl-color-bg:             #0a0a0a;
+  --sl-color-bg-nav:         #0a0a0a;
+  --sl-color-bg-sidebar:     #0a0a0a;
+  --sl-color-bg-inline-code: #161616;
   --sl-color-bg-accent:      var(--brand-accent);
 
   /* Text */
-  --sl-color-white: #ffffff;
-  --sl-color-text:  #bbbbbb;
+  --sl-color-white: #f5f5f5;       /* strongest heading color */
+  --sl-color-text:  #c8c8c8;       /* body */
 
-  /* Gray scale (Starlight uses 7 shades; map to Cairn's) */
-  --sl-color-gray-1: #eeeeee;   /* near-white highlights */
-  --sl-color-gray-2: #dddddd;   /* text-strong */
-  --sl-color-gray-3: #bbbbbb;   /* body text */
-  --sl-color-gray-4: #888888;   /* text-muted */
-  --sl-color-gray-5: #444444;   /* dim borders */
-  --sl-color-gray-6: #1e1e1e;   /* card backgrounds */
-  --sl-color-gray-7: #0e0e0e;   /* surface */
+  /* Gray scale — more steps, tighter tonal range */
+  --sl-color-gray-1: #f0f0f0;      /* strongest */
+  --sl-color-gray-2: #d6d6d6;      /* headings */
+  --sl-color-gray-3: #a8a8a8;      /* secondary text */
+  --sl-color-gray-4: #7a7a7a;      /* muted text, meta */
+  --sl-color-gray-5: #3a3a3a;      /* strong borders */
+  --sl-color-gray-6: #1a1a1a;      /* surface-2 */
+  --sl-color-gray-7: #121212;      /* surface-1 */
 
-  /* Hairlines (borders) */
-  --sl-color-hairline:        rgba(136, 136, 136, 0.15);
-  --sl-color-hairline-light:  rgba(136, 136, 136, 0.10);
-  --sl-color-hairline-shade:  rgba(136, 136, 136, 0.20);
+  /* Borders — very subtle, almost imperceptible */
+  --sl-color-hairline:       rgba(255, 255, 255, 0.06);
+  --sl-color-hairline-light: rgba(255, 255, 255, 0.04);
+  --sl-color-hairline-shade: rgba(255, 255, 255, 0.10);
 
-  /* Typography */
-  --sl-font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  --sl-font-mono: 'DM Mono', 'Fira Code', ui-monospace, SFMono-Regular, Consolas, monospace;
+  /* Custom */
+  --wiki-chrome-bg:          rgba(10, 10, 10, 0.80);     /* sticky nav with blur */
+  --wiki-card-bg:            #121212;
+  --wiki-focus-ring:         rgba(253, 179, 42, 0.40);
 
-  /* Content width — a touch narrower than default for comfortable line length */
-  --sl-content-width: 48rem;
+  /* =========================================================================
+   * 2. TYPOGRAPHY
+   * ========================================================================= */
+
+  /* Font stacks — Inter primary, fall to system */
+  --sl-font: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, sans-serif;
+  --sl-font-mono: 'DM Mono', ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+
+  /* Size scale — a touch larger than Starlight defaults for comfortable reading */
+  --sl-text-base:        16px;
+  --sl-text-xs:          12px;
+  --sl-text-sm:          13.5px;
+  --sl-text-lg:          17px;
+  --sl-text-xl:          19px;
+  --sl-text-2xl:         24px;
+  --sl-text-3xl:         30px;
+  --sl-text-4xl:         40px;
+  --sl-text-5xl:         48px;
+
+  /* Line heights — roomier */
+  --sl-line-height:       1.65;
+  --sl-line-height-headings: 1.2;
+
+  /* =========================================================================
+   * 3. LAYOUT
+   * ========================================================================= */
+
+  --sl-content-width:     46rem;         /* ~736px — comfortable line length */
+  --sl-sidebar-width:     19rem;         /* ~304px */
+  --sl-nav-height:        4.25rem;       /* 68px */
 }
 
-/* Light — mirrors Cairn's light mode */
+/* Light mode */
 :root[data-theme='light'] {
-  --brand-accent: #d4940d;
-  --brand-accent-subtle: rgba(212, 148, 13, 0.10);
+  --brand-accent:           #b8800c;
+  --brand-accent-hover:     #9c6906;
+  --brand-accent-subtle:    rgba(184, 128, 12, 0.08);
+  --brand-accent-bg-tint:   rgba(184, 128, 12, 0.03);
 
-  --sl-color-accent:      var(--brand-accent);
-  --sl-color-accent-high: #a86e06;
-  --sl-color-accent-low:  rgba(212, 148, 13, 0.18);
-  --sl-color-text-accent: var(--brand-accent);
+  --sl-color-accent:        var(--brand-accent);
+  --sl-color-accent-high:   #805908;
+  --sl-color-accent-low:    var(--brand-accent-subtle);
+  --sl-color-text-accent:   var(--brand-accent);
 
-  --sl-color-bg:             #fafafa;
-  --sl-color-bg-nav:         #fafafa;
+  --sl-color-bg:             #ffffff;
+  --sl-color-bg-nav:         #ffffff;
   --sl-color-bg-sidebar:     #fafafa;
-  --sl-color-bg-inline-code: #efefef;
+  --sl-color-bg-inline-code: #f5f5f5;
 
-  --sl-color-white: #111111;
-  --sl-color-text:  #444444;
+  --sl-color-white: #0d0d0d;
+  --sl-color-text:  #333333;
 
-  --sl-color-gray-1: #111111;
-  --sl-color-gray-2: #222222;
-  --sl-color-gray-3: #444444;
-  --sl-color-gray-4: #777777;
-  --sl-color-gray-5: #bbbbbb;
-  --sl-color-gray-6: #e5e5e5;
-  --sl-color-gray-7: #f0f0f0;
+  --sl-color-gray-1: #0d0d0d;
+  --sl-color-gray-2: #1a1a1a;
+  --sl-color-gray-3: #4a4a4a;
+  --sl-color-gray-4: #767676;
+  --sl-color-gray-5: #c6c6c6;
+  --sl-color-gray-6: #ebebeb;
+  --sl-color-gray-7: #f5f5f5;
 
-  --sl-color-hairline:       rgba(0, 0, 0, 0.10);
-  --sl-color-hairline-light: rgba(0, 0, 0, 0.06);
-  --sl-color-hairline-shade: rgba(0, 0, 0, 0.14);
+  --sl-color-hairline:       rgba(0, 0, 0, 0.08);
+  --sl-color-hairline-light: rgba(0, 0, 0, 0.05);
+  --sl-color-hairline-shade: rgba(0, 0, 0, 0.12);
+
+  --wiki-chrome-bg:          rgba(255, 255, 255, 0.80);
+  --wiki-card-bg:            #fafafa;
+  --wiki-focus-ring:         rgba(184, 128, 12, 0.35);
 }
 
-/* Body typography polish */
-body {
+/* =========================================================================
+ * 4. GLOBAL BODY + RENDERING
+ * ========================================================================= */
+
+* {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  letter-spacing: -0.005em;
 }
 
-/* Headings — tighter tracking, closer to Cairn's feel */
-h1, h2, h3, h4, h5, h6 {
+body {
+  font-feature-settings: 'ss01', 'cv01', 'cv11';   /* Inter's single-story a, etc. */
+  letter-spacing: -0.003em;
+}
+
+/* Focus ring — consistent across everything */
+*:focus-visible {
+  outline: 2px solid var(--wiki-focus-ring);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+/* =========================================================================
+ * 5. TYPOGRAPHY — HEADINGS
+ * ========================================================================= */
+
+.sl-markdown-content h1,
+.sl-markdown-content h2,
+.sl-markdown-content h3,
+.sl-markdown-content h4,
+.sl-markdown-content h5,
+.sl-markdown-content h6 {
+  color: var(--sl-color-white);
+  font-weight: 600;
   letter-spacing: -0.02em;
+  line-height: 1.2;
+  margin-top: 2.5em;
+  margin-bottom: 0.5em;
+}
+
+.sl-markdown-content h1 {
+  font-size: var(--sl-text-4xl);
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  margin-top: 0;
+  margin-bottom: 0.75em;
+}
+
+.sl-markdown-content h2 {
+  font-size: var(--sl-text-2xl);
+  font-weight: 600;
+  letter-spacing: -0.018em;
+  padding-top: 0.5em;           /* slight visual break between sections */
+  border-top: 1px solid var(--sl-color-hairline-light);
+  margin-top: 3em;
+}
+
+.sl-markdown-content h3 {
+  font-size: var(--sl-text-xl);
+  font-weight: 600;
+  margin-top: 2em;
+}
+
+.sl-markdown-content h4 {
+  font-size: var(--sl-text-lg);
+  font-weight: 600;
+  margin-top: 1.75em;
+  color: var(--sl-color-gray-2);
+}
+
+/* Headings next to each other don't need extra top margin */
+.sl-markdown-content h1 + h2,
+.sl-markdown-content h2 + h3,
+.sl-markdown-content h3 + h4 {
+  margin-top: 1em;
+  border-top: none;
+  padding-top: 0;
+}
+
+/* =========================================================================
+ * 6. TYPOGRAPHY — BODY
+ * ========================================================================= */
+
+.sl-markdown-content {
+  font-size: var(--sl-text-base);
+  line-height: var(--sl-line-height);
+  color: var(--sl-color-text);
+}
+
+.sl-markdown-content p {
+  margin-top: 0;
+  margin-bottom: 1.2em;
+}
+
+.sl-markdown-content strong {
+  color: var(--sl-color-gray-1);
   font-weight: 600;
 }
-h1 { font-weight: 700; }
 
-/* Links — subtle underline, accent on hover (matches Cairn) */
-.sl-markdown-content a:not(.site-title):not(.social-icons a) {
+.sl-markdown-content em {
+  color: var(--sl-color-gray-2);
+}
+
+/* Lists — tighter and better-kerned */
+.sl-markdown-content ul,
+.sl-markdown-content ol {
+  padding-left: 1.5em;
+  margin-top: 0.75em;
+  margin-bottom: 1.2em;
+}
+.sl-markdown-content li {
+  margin-bottom: 0.5em;
+}
+.sl-markdown-content li > p {
+  margin-bottom: 0.5em;
+}
+.sl-markdown-content li > ul,
+.sl-markdown-content li > ol {
+  margin-top: 0.5em;
+  margin-bottom: 0.5em;
+}
+
+/* Custom bullet style — thin em dash */
+.sl-markdown-content ul > li {
+  list-style: none;
+  position: relative;
+}
+.sl-markdown-content ul > li::before {
+  content: '—';
+  position: absolute;
+  left: -1.25em;
+  color: var(--sl-color-gray-4);
+  font-weight: 400;
+}
+
+/* =========================================================================
+ * 7. LINKS
+ * ========================================================================= */
+
+.sl-markdown-content a:not([class]) {
   color: var(--sl-color-white);
   text-decoration: none;
-  border-bottom: 1px solid var(--sl-color-hairline);
-  transition: border-color 0.2s, color 0.2s;
+  border-bottom: 1px solid var(--sl-color-hairline-shade);
+  transition: color 0.15s ease, border-color 0.15s ease;
 }
-.sl-markdown-content a:hover {
+.sl-markdown-content a:not([class]):hover {
   color: var(--brand-accent);
   border-bottom-color: var(--brand-accent);
 }
 
-/* Inline code — slightly more muted */
-.sl-markdown-content :not(pre) > code {
-  font-size: 0.92em;
-  padding: 2px 6px;
-  border-radius: 4px;
-  color: var(--sl-color-gray-2);
-  background: var(--sl-color-bg-inline-code);
-  border: 1px solid var(--sl-color-hairline);
+/* External link treatment — subtle arrow */
+.sl-markdown-content a[href^='http']:not([href*='wiki.r-that.com'])::after {
+  content: '↗';
+  margin-left: 0.15em;
+  font-size: 0.85em;
+  color: var(--sl-color-gray-4);
+  transition: color 0.15s;
+}
+.sl-markdown-content a[href^='http']:hover::after {
+  color: var(--brand-accent);
 }
 
-/* Blockquote — mark source lines subtly */
+/* =========================================================================
+ * 8. INLINE CODE
+ * ========================================================================= */
+
+.sl-markdown-content :not(pre) > code {
+  font-family: var(--sl-font-mono);
+  font-size: 0.88em;
+  padding: 0.15em 0.45em;
+  border-radius: 4px;
+  color: var(--sl-color-gray-1);
+  background: var(--sl-color-bg-inline-code);
+  border: 1px solid var(--sl-color-hairline);
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+/* In headings, inline code is sized down and muted */
+.sl-markdown-content h1 code,
+.sl-markdown-content h2 code,
+.sl-markdown-content h3 code {
+  font-size: 0.82em;
+  font-weight: 600;
+}
+
+/* =========================================================================
+ * 9. CODE BLOCKS (expressive-code)
+ * ========================================================================= */
+
+.expressive-code {
+  margin: 1.5em 0 !important;
+}
+
+.expressive-code .frame {
+  border: 1px solid var(--sl-color-hairline) !important;
+  border-radius: 8px !important;
+  box-shadow: none !important;
+}
+
+.expressive-code pre {
+  font-size: var(--sl-text-sm) !important;
+  line-height: 1.55 !important;
+  padding: 1em 1.25em !important;
+}
+
+/* Language label in the corner */
+.expressive-code .frame.has-title .header,
+.expressive-code .frame .header {
+  font-size: var(--sl-text-xs) !important;
+  font-family: var(--sl-font-mono) !important;
+  color: var(--sl-color-gray-4) !important;
+  letter-spacing: 0.02em !important;
+  padding: 0.5em 1.25em !important;
+  border-bottom: 1px solid var(--sl-color-hairline) !important;
+}
+
+/* =========================================================================
+ * 10. BLOCKQUOTES
+ * ========================================================================= */
+
 .sl-markdown-content blockquote {
-  border-left: 2px solid var(--sl-color-hairline);
-  padding-left: 1rem;
-  color: var(--sl-color-gray-4);
-  font-size: 0.92em;
+  border-left: 2px solid var(--sl-color-hairline-shade);
+  padding-left: 1em;
+  margin: 1.5em 0;
+  color: var(--sl-color-gray-3);
+  font-size: 0.95em;
   font-style: normal;
 }
 .sl-markdown-content blockquote strong {
   color: var(--sl-color-gray-2);
 }
+.sl-markdown-content blockquote p {
+  margin-bottom: 0.5em;
+}
+.sl-markdown-content blockquote p:last-child {
+  margin-bottom: 0;
+}
 
-/* Table — match Cairn's restrained style */
+/* The "Source: ..." blockquote at the top of every entry — metadata banner */
+.sl-markdown-content > blockquote:first-child {
+  font-family: var(--sl-font-mono);
+  font-size: var(--sl-text-xs);
+  letter-spacing: 0.01em;
+  padding: 0.85em 1.1em;
+  margin-bottom: 2em;
+  background: var(--brand-accent-bg-tint);
+  border: 1px solid var(--brand-accent-subtle);
+  border-left: 3px solid var(--brand-accent);
+  border-radius: 6px;
+  color: var(--sl-color-gray-3);
+}
+.sl-markdown-content > blockquote:first-child strong {
+  color: var(--brand-accent);
+  font-weight: 600;
+}
+
+/* =========================================================================
+ * 11. TABLES
+ * ========================================================================= */
+
 .sl-markdown-content table {
-  font-size: 0.92em;
+  font-size: var(--sl-text-sm);
+  border-collapse: collapse;
+  margin: 1.5em 0;
+  width: 100%;
 }
-.sl-markdown-content th {
+.sl-markdown-content thead th {
   font-weight: 500;
+  font-size: var(--sl-text-xs);
   color: var(--sl-color-gray-4);
-  font-size: 0.8em;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.05em;
+  text-align: left;
+  padding: 0.75em 1em;
   border-bottom: 1px solid var(--sl-color-hairline-shade);
+  background: transparent;
 }
-.sl-markdown-content td {
+.sl-markdown-content tbody td {
+  padding: 0.85em 1em;
   border-bottom: 1px solid var(--sl-color-hairline);
+  color: var(--sl-color-text);
+  vertical-align: top;
+}
+.sl-markdown-content tbody tr:last-child td {
+  border-bottom: none;
+}
+.sl-markdown-content tbody tr:hover {
+  background: var(--sl-color-hairline-light);
 }
 
-/* Sidebar — tighter, more terminal-feeling */
+/* =========================================================================
+ * 12. HORIZONTAL RULE
+ * ========================================================================= */
+
+.sl-markdown-content hr {
+  border: none;
+  border-top: 1px solid var(--sl-color-hairline);
+  margin: 3em 0;
+}
+
+/* =========================================================================
+ * 13. SIDEBAR
+ * ========================================================================= */
+
+starlight-sidebar,
+.sidebar-pane {
+  background: var(--sl-color-bg-sidebar);
+  border-right: 1px solid var(--sl-color-hairline-light);
+}
+
 .sidebar-content {
-  font-size: 0.9rem;
-}
-.sidebar-content summary,
-.sidebar-content ul li a {
-  letter-spacing: -0.003em;
+  padding: 1rem 0.75rem !important;
 }
 
-/* Scrollbar */
+/* Section headers (Components, Patterns, ...) */
+.sidebar-content > ul > li > details > summary > .large,
+.sidebar-content > ul > li > .large {
+  font-size: var(--sl-text-xs) !important;
+  font-weight: 600 !important;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--sl-color-gray-4) !important;
+  padding: 0.5em 0.75em !important;
+  margin-top: 1em;
+}
+
+/* Sidebar links */
+.sidebar-content a {
+  font-size: var(--sl-text-sm) !important;
+  color: var(--sl-color-gray-3) !important;
+  padding: 0.35em 0.75em !important;
+  border-radius: 4px;
+  border-left: 2px solid transparent;
+  transition: color 0.15s, background 0.15s, border-color 0.15s;
+  font-weight: 400;
+}
+.sidebar-content a:hover {
+  color: var(--sl-color-white) !important;
+  background: var(--sl-color-hairline-light);
+}
+.sidebar-content a[aria-current='page'] {
+  color: var(--brand-accent) !important;
+  background: var(--brand-accent-subtle);
+  font-weight: 500;
+  border-left-color: var(--brand-accent);
+}
+
+/* =========================================================================
+ * 14. TOP NAV (HEADER)
+ * ========================================================================= */
+
+.header {
+  background: var(--wiki-chrome-bg) !important;
+  backdrop-filter: saturate(180%) blur(12px);
+  -webkit-backdrop-filter: saturate(180%) blur(12px);
+  border-bottom: 1px solid var(--sl-color-hairline-light) !important;
+}
+
+.site-title {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  font-size: var(--sl-text-base);
+}
+
+/* Search box — restrained */
+.search-button {
+  font-size: var(--sl-text-sm) !important;
+  color: var(--sl-color-gray-4) !important;
+  background: var(--sl-color-bg-inline-code) !important;
+  border: 1px solid var(--sl-color-hairline) !important;
+  border-radius: 6px !important;
+  transition: border-color 0.15s, color 0.15s;
+}
+.search-button:hover {
+  border-color: var(--sl-color-hairline-shade) !important;
+  color: var(--sl-color-gray-2) !important;
+}
+
+/* =========================================================================
+ * 15. RIGHT-HAND TOC (On This Page)
+ * ========================================================================= */
+
+.right-sidebar {
+  font-size: var(--sl-text-xs);
+}
+.right-sidebar h2 {
+  font-size: var(--sl-text-xs) !important;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--sl-color-gray-4) !important;
+  font-weight: 600 !important;
+  margin-bottom: 1em !important;
+}
+.right-sidebar a {
+  color: var(--sl-color-gray-4) !important;
+  padding: 0.25em 0 !important;
+  border-left: 2px solid transparent;
+  padding-left: 0.75em !important;
+  transition: color 0.15s, border-color 0.15s;
+}
+.right-sidebar a:hover {
+  color: var(--sl-color-gray-2) !important;
+}
+.right-sidebar a[aria-current='true'] {
+  color: var(--brand-accent) !important;
+  border-left-color: var(--brand-accent);
+}
+
+/* =========================================================================
+ * 16. ASIDES (Starlight callouts: note/tip/caution/danger)
+ * ========================================================================= */
+
+.starlight-aside {
+  border-radius: 8px !important;
+  border: 1px solid var(--sl-color-hairline) !important;
+  border-left-width: 3px !important;
+  padding: 1em 1.25em !important;
+  margin: 1.5em 0 !important;
+  background: var(--wiki-card-bg) !important;
+}
+
+.starlight-aside__title {
+  font-size: var(--sl-text-xs) !important;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 600 !important;
+  margin-bottom: 0.5em !important;
+}
+
+.starlight-aside--note {
+  border-left-color: var(--sl-color-gray-4) !important;
+}
+.starlight-aside--tip {
+  border-left-color: #10b981 !important;
+}
+.starlight-aside--caution {
+  border-left-color: var(--brand-accent) !important;
+}
+.starlight-aside--danger {
+  border-left-color: #ef4444 !important;
+}
+
+/* =========================================================================
+ * 17. HERO (landing page)
+ * ========================================================================= */
+
+.hero {
+  padding: 3rem 1rem !important;
+}
+.hero h1 {
+  font-size: var(--sl-text-5xl) !important;
+  letter-spacing: -0.03em !important;
+  font-weight: 700 !important;
+}
+.hero .tagline {
+  font-size: var(--sl-text-lg) !important;
+  color: var(--sl-color-gray-3) !important;
+  max-width: 42ch;
+  line-height: 1.5 !important;
+}
+
+/* =========================================================================
+ * 18. SCROLLBAR
+ * ========================================================================= */
+
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;
 }
 ::-webkit-scrollbar-track {
-  background: var(--sl-color-bg);
+  background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--sl-color-hairline);
+  background: var(--sl-color-hairline-shade);
   border-radius: 10px;
+  border: 2px solid var(--sl-color-bg);
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--sl-color-gray-4);
+  background: var(--sl-color-gray-5);
 }
 
-/* "Source" line at top of entries — treat like metadata */
-.sl-markdown-content > blockquote:first-child {
-  font-family: var(--sl-font-mono);
-  font-size: 0.82em;
-  padding: 0.75rem 1rem;
-  margin-bottom: 1.5rem;
-  background: var(--sl-color-bg-inline-code);
-  border-left: 2px solid var(--brand-accent);
-  border-radius: 4px;
+/* Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--sl-color-hairline-shade) transparent;
 }
 
-/* Syntax-highlighted code blocks — muted panel */
-.expressive-code,
-.sl-markdown-content pre {
-  border: 1px solid var(--sl-color-hairline) !important;
-  border-radius: 6px !important;
+/* =========================================================================
+ * 19. SELECTION
+ * ========================================================================= */
+
+::selection {
+  background: var(--brand-accent-subtle);
+  color: var(--sl-color-white);
+}
+
+/* =========================================================================
+ * 20. LIVE-DEMO CONTAINER POLISH
+ * ========================================================================= */
+
+/* Demos rendered in MDX often use their own dark bg; give them breathing room */
+.sl-markdown-content > div[style*='background'],
+.sl-markdown-content > div[style*='padding'] {
+  border-radius: 8px;
+  margin: 1.5em 0;
 }
