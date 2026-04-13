@@ -8,15 +8,17 @@ import Btn from '../../../examples/btn.tsx';
 > **Source:** [cairn/ts/src/components/PhotoViewer.jsx](https://github.com/RogerSquare/cairn/blob/main/ts/src/components/PhotoViewer.jsx) · [artifex/frontend/src/components/PhotoViewer.jsx](https://github.com/RogerSquare/Artifex/blob/main/frontend/src/components/PhotoViewer.jsx)
 > **Category:** UI primitive
 
+**Btn** — a minimal icon-first button with muted default, brighter hover, and a tinted active state.
+
 ## What it is
 
-A small icon-first button. Renders a `<button>` with muted default colors, a brighter hover state, and an "active" variant that reads as *currently-toggled*.
+Renders a `<button>` with a square hit area, a 1.5× icon slot, and three visual states: muted default, bright hover, tinted "active" (reads as *currently-toggled*).
 
 ## Why it exists
 
-Toolbars kept re-implementing the same button shape: a square hit area, a 1.5x icon, muted-default/bright-hover/tinted-active states. Extracting it removed 30+ lines of duplicated markup across PhotoViewer, CompareView, and a couple of header rows.
+**The problem:** toolbars re-implemented the same button shape across components — square hit area, 1.5× icon, muted-default / bright-hover / tinted-active states. 30+ lines of duplicated markup across PhotoViewer, CompareView, and header rows.
 
-The interface is deliberately tiny (`onClick`, `active`, `children`, passthrough props) so it can host any icon from `@phosphor-icons/react` or `lucide-react` without caring which.
+**The fix:** one component, deliberately tiny interface — `onClick`, `active`, `children`, passthrough props. Hosts any icon from `@phosphor-icons/react` or `lucide-react` without caring which.
 
 ## Live
 
@@ -55,6 +57,6 @@ See the full example file at `src/examples/btn.tsx` in this repo.
 
 ## Gotchas
 
-- **Must live at module scope.** Defining `Btn` inside another component's render path gives every re-render a fresh component identity, which unmounts and remounts every instance on every parent render. eslint-plugin-react-hooks catches this with `react-hooks/static-components`. See `artifex/bug-component-in-render-001` for the original incident.
-- **No forwardRef.** If you need focus management or to point at the DOM node from a parent (e.g. tooltip anchors), wrap it or switch to `React.forwardRef`.
-- **Hover state uses inline style.** Works everywhere, but means you can't theme it via CSS variables. Fine for teaching; for production, prefer a class-based approach with your theme tokens.
+- **Must live at module scope.** Defining `Btn` inside another component's render body creates a fresh component identity on every parent render — React unmounts and remounts every instance. `eslint-plugin-react-hooks` catches this with `react-hooks/static-components`. See `artifex/bug-component-in-render-001`.
+- **No forwardRef.** Focus management or DOM-node access from a parent (tooltip anchors, etc.) requires wrapping or switching to `React.forwardRef`.
+- **Hover state uses inline style.** Works everywhere, but cannot be themed via CSS variables. Fine for teaching; production code prefers a class-based approach with theme tokens.

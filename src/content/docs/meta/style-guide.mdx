@@ -90,11 +90,28 @@ import { Aside } from '@astrojs/starlight/components';
 
 ## Tone
 
-- Short sentences. Complete thoughts.
-- Explain *why* more than *what*. Code already shows what.
+Reference-manual, not dev-blog. The voice on [notes.r-that.com](https://notes.r-that.com) is the reference — match it.
+
+**Shape of a paragraph:**
+- `**Topic** — short declarative descriptor.` as the lead line of a section.
+- Short paragraphs, one idea each. Complete thoughts.
+- Em dashes as connectors — they do the work of semicolons.
+- Declarative third-person-ish. "The registry exposes..." not "I built a registry that...".
+
+**Explaining problems and fixes:**
+- `**The problem:**` / `**The fix:**` blocked structure, not prose arc.
+- State facts and consequences. Skip the story of discovering them.
+- Procedures get numbered step headers: `1. Install the essentials`, `2. Configure the drop-in`.
+
+**Away from:**
+- Narrative first-person. "I rebranded X", "we tried Y first", "ask me how I know".
+- Snarky asides. The wiki is reference material; the reader is looking something up, not reading a blog.
+- Arc writing — "we tried X, it broke, so we switched to Z". Replace with `**What breaks:** X. **Why:** Y. **Use instead:** Z.`
+
+**Still applies:**
 - No marketing voice. No "elegantly", "simply", "robust" — if the word would survive being deleted, delete it.
-- First person singular is OK. It's your wiki.
-- Backstory is gold. "We tried X first, it broke because Y, so we switched to Z" is the story that future-you will thank you for.
+- Explain *why* more than *what*. Code already shows what.
+- First person is OK when unavoidable for traceability ("my word-boundary match is liberal") — but default to declarative.
 
 ## When to write a new entry vs. update an existing one
 
