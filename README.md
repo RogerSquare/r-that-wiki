@@ -1,5 +1,15 @@
 # rog-wiki
 
+> Deep-dive pattern library covering components, patterns, and code snippets from my projects. Lives at [wiki.r-that.com](https://wiki.r-that.com).
+
+**Live demo:** [wiki.r-that.com](https://wiki.r-that.com)
+**Stack:** Astro · Starlight · MDX · React · Pagefind (client-side search)
+**Status:** Active — updated continuously as patterns emerge
+
+## What's interesting technically
+
+Sidebar ordering is **hand-curated** in `astro.config.mjs`, not alphabetical. Content lives in the order a newcomer should encounter it, not the order the filesystem lists it. Starlight's sidebar config is verbose, but the editorial control is the point: grouping "Components / Patterns / Snippets" each with sub-categories lets readers navigate by *how they're thinking about a problem*, not *what letter the filename starts with*. Deployment is a static `scp -P 2200 -r dist/* root@r-that.com:/var/www/wiki/` to an nginx subdomain — no CI pipeline, no cache layer, no build server.
+
 Deep-dive entries on components, patterns, and code snippets used across my projects. Deployed at [wiki.r-that.com](https://wiki.r-that.com).
 
 Built with [Astro Starlight](https://starlight.astro.build/) + MDX + React. Static output, no backend.
