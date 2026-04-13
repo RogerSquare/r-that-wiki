@@ -1,0 +1,78 @@
+---
+title: MCP server over stdio for a local Express API
+description: Wrap any localhost REST backend as a Claude Code MCP server in ~50 lines, registered once via `claude mcp add`.
+---
+
+> **Source:** [atrium/backend/mcp/server.js](https://github.com/RogerSquare/atrium/blob/main/backend/mcp/server.js) — stdio transport boot · [atrium/backend/mcp/api.js](https://github.com/RogerSquare/atrium/blob/main/backend/mcp/api.js) — HTTP client + token auth · [atrium/backend/mcp/tools/](https://github.com/RogerSquare/atrium/tree/main/backend/mcp/tools) — one file per tool
+> **Category:** Snippet — Node.js / Claude Code
+
+**Atrium MCP server** — a Node script that registers Atrium's REST API as a set of typed tools (`atrium_list_tasks`, `atrium_get_task`, `atrium_update_task`, etc.) consumable from any Claude Code session. The server is spawned by Claude over stdio; tool calls round-trip through HTTP to the local Atrium backend.
+
+## What it is
+
+Three small pieces:
+
+1. **`server.js`** — boots the `@modelcontextprotocol/sdk` `Server`, connects a `StdioServerTransport`, dynamically loads each `tools/*.js` file as a tool definition.
+2. **`api.js`** — thin `fetch` wrapper that adds `Authorization: Bearer ${ATRIUM_API_TOKEN}` to every request and bails fast if the token is missing.
+3. **`tools/<name>.js`** — each file exports `{ name, description, inputSchema, handler }`. The handler calls `api.js` and returns whatever the REST endpoint returned.
+
+The whole package is `~250 lines` total — most of it tool definitions, not infrastructure.
+
+## Why it exists
+
+**The problem:** Claude Code can call shell commands and read files, but reaching a local REST service for structured operations means writing prompt templates, parsing JSON, handling auth on every call. Repetitive and lossy.
+
+**The fix:** expose the REST surface as MCP tools. Claude sees them as first-class function calls with typed inputs. No prompt engineering, no JSON parsing in the model. The MCP protocol handles transport, error shape, and tool discovery.
+
+## Setup (one-time per machine)
+
+```bash
+# 1. Install the Atrium backend so the bin is on PATH (or use absolute path)
+cd ~/Documents/opencode/atrium/backend && npm install
+
+# 2. Get an agent token from the Atrium admin UI (or via /api/auth/agent-token)
+# 3. Register the MCP server with Claude Code, user-scope:
+claude mcp add --transport stdio --scope user atrium \
+  --env ATRIUM_API_TOKEN=<your-agent-token> \
+  --env ATRIUM_URL=http://localhost:3001 \
+  -- node /absolute/path/to/atrium/backend/mcp/server.js
+```
+
+After that, every new `claude` session in any directory can list/get/update Atrium tasks via `mcp__atrium__atrium_*` tool calls.
+
+## Why stdio over HTTP transport
+
+- **Lifecycle matches the editor.** Claude spawns the MCP server when the session starts, kills it when the session ends. No extra port, no orphan processes.
+- **Local-only by construction.** stdio means the MCP transport never crosses the network. The HTTP from `api.js` is `localhost:3001` — same blast radius as a local CLI.
+- **Easy to debug.** The MCP server's stderr is captured by Claude Code's logs. Crash → readable trace.
+
+## Per-tool shape
+
+```js
+// backend/mcp/tools/get_task.js
+const { apiGet } = require('../api');
+
+module.exports = {
+  name: 'atrium_get_task',
+  description: 'Fetch a single Atrium task with full detail.',
+  inputSchema: {
+    type: 'object',
+    properties: { id: { type: 'string', description: 'The task ID.' } },
+    required: ['id'],
+  },
+  handler: async ({ id }) => apiGet(`/api/tasks/${encodeURIComponent(id)}`),
+};
+```
+
+The dispatcher in `server.js` walks `tools/`, loads each module, and registers it with the MCP `Server` instance. Adding a tool = drop a new file in `tools/`.
+
+## Gotchas
+
+- **Token in env, not arg.** `claude mcp add --env` writes the token into `~/.claude.json` unencrypted. Treat the file like an API-key vault. Don't commit it.
+- **Backend must be running locally.** If `localhost:3001` is unreachable, `api.js` throws a clear error on startup. The MCP server itself will still register but every tool call returns the same error message.
+- **Tool name collision.** If two MCP servers expose the same tool name, the most recently registered wins silently. Prefix tool names with the project (`atrium_*`) to keep them separated.
+- **Adding a new tool = restart Claude.** Tool list is fetched on session start. New file in `tools/` won't appear until the next session.
+
+## When *not* to use stdio
+
+If the backend is a remote service (not localhost), use HTTP transport instead — `claude mcp add --transport http --url https://...`. stdio is the right pick when the API is local and the agent token is per-machine.

@@ -1,0 +1,68 @@
+---
+title: Starlight header selector scoping
+description: Starlight nests two elements with `class="header"`. Unscoped overrides target both and double-render borders, backgrounds, blur. Scope by tag name to fix.
+---
+
+> **Source:** [r-that-wiki/src/styles/custom.css](https://github.com/RogerSquare/r-that-wiki/blob/main/src/styles/custom.css) — the `header.header { ... }` scoped rule · [Starlight Header.astro](https://github.com/withastro/starlight/blob/main/packages/starlight/components/Header.astro) — the inner `<div class="header">` source
+> **Category:** Snippet — Astro / Starlight
+
+**Starlight header selector scoping** — when overriding the sticky-nav header in Starlight, scope your selector to `header.header` instead of the bare `.header`. Two elements share the class; targeting both stacks borders, backgrounds, and `backdrop-filter` calls.
+
+## What it is
+
+Starlight's rendered DOM has two nested elements that both carry `class="header"`:
+
+```html
+<header class="header astro-vrdttmbt">         <!-- outer: sticky nav from Page.astro -->
+  <div class="header astro-kmkmnagf">          <!-- inner: flex container from Header.astro -->
+    <!-- logo, search, social icons -->
+  </div>
+</header>
+```
+
+A naive override:
+
+```css
+/* DON'T — matches BOTH the <header> and the <div> */
+.header {
+  background: var(--wiki-chrome-bg);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--sl-color-hairline-light);
+}
+```
+
+…targets the outer `<header>` AND the inner `<div>`. Because the outer has padding from Starlight defaults, the inner's border-bottom renders a few pixels *above* the outer's border-bottom. Visible result: a faint double line right under the search bar. Backdrop-filter also runs twice per paint — small perf hit on top.
+
+## The fix
+
+Scope by tag name:
+
+```css
+/* DO — matches only the outer <header> tag */
+header.header {
+  background: var(--wiki-chrome-bg);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--sl-color-hairline-light);
+}
+```
+
+The `header.header` selector specifically matches the `<header>` element with class `header` — the inner `<div class="header">` is excluded. One border, one blur, one composite. Done.
+
+## Why it exists
+
+Starlight uses Astro's CSS scoping, which adds a per-component hash class (`astro-vrdttmbt` / `astro-kmkmnagf`) to every element. The framework's own rules use `:where(.astro-xxx)` to disambiguate. User overrides in `customCss` files don't have that scope — they apply globally. Two elements sharing a stable class name without an Astro scope around your override is the trap.
+
+## How to spot it
+
+If you've added a `.header { ... !important }` rule to a Starlight site and you see:
+
+- A faint horizontal line right under the search bar that wasn't there before
+- The header background appearing slightly different at the top vs the bottom edge
+- Backdrop-filter that looks "extra blurred" compared to other Starlight sites
+
+…check the rendered DOM. If you find two elements with `class="header"` and your override matches both, this is the bug.
+
+## Gotchas / generalize the principle
+
+The same trap applies any time a framework uses generic class names on multiple stacked elements — Starlight's `header`, common patterns like `.container`, `.content`, `.wrapper`. Before adding a global override, inspect the DOM and confirm only ONE element carries the class you're targeting. Tag-scoped selectors (`header.header`, `main.content`, `nav.wrapper`) are the cheapest defense.

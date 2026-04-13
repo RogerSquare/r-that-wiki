@@ -1,4 +1,4 @@
-# rog-wiki
+# R-That Wiki
 
 > Deep-dive pattern library covering components, patterns, and code snippets from my projects. Lives at [wiki.r-that.com](https://wiki.r-that.com).
 

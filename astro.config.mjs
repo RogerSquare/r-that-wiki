@@ -8,8 +8,13 @@ export default defineConfig({
   site: 'https://wiki.r-that.com',
   integrations: [
     starlight({
-      title: 'rog-wiki',
+      title: 'R-That Wiki',
       description: 'Deep-dive entries on components, patterns, and code snippets.',
+      logo: {
+        dark: './src/assets/logo-dark.svg',
+        light: './src/assets/logo-light.svg',
+        replacesTitle: true,
+      },
       customCss: [
         './src/styles/custom.css',
       ],
@@ -34,7 +39,7 @@ export default defineConfig({
         themes: ['github-dark-dimmed', 'github-light'],
       },
       social: [
-        { icon: 'github', label: 'GitHub', href: 'https://github.com/RogerSquare/rog-wiki' },
+        { icon: 'github', label: 'GitHub', href: 'https://github.com/RogerSquare/r-that-wiki' },
       ],
       sidebar: [
         {
@@ -167,6 +172,7 @@ export default defineConfig({
                 { slug: 'patterns/markdown-blog-from-filesystem' },
                 { slug: 'patterns/pagination-cursor-vs-offset' },
                 { slug: 'patterns/per-project-hidden-dir' },
+                { slug: 'patterns/silent-buildindex-failure' },
                 { slug: 'patterns/sqlite-fts5-search' },
                 { slug: 'patterns/sqlite-job-queue' },
                 { slug: 'patterns/stable-project-ids' },
@@ -263,6 +269,7 @@ export default defineConfig({
               label: 'Node & JS',
               collapsed: true,
               items: [
+                { slug: 'snippets/atrium-mcp-server-stdio-setup' },
                 { slug: 'snippets/concurrent-session-guard' },
                 { slug: 'snippets/dockerode-idioms' },
                 { slug: 'snippets/drop-unused-catch' },
@@ -271,6 +278,8 @@ export default defineConfig({
                 { slug: 'snippets/full-res-proxy-route' },
                 { slug: 'snippets/host-metrics-from-container' },
                 { slug: 'snippets/sanitize-safe-path' },
+                { slug: 'snippets/starlight-header-selector-scoping' },
+                { slug: 'snippets/starlight-heading-wrapper-font-size' },
                 { slug: 'snippets/task-id-generation' },
                 { slug: 'snippets/trust-proxy-for-rate-limiter' },
               ],

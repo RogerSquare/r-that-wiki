@@ -3,7 +3,7 @@ title: rsync atomic swap for static deploys
 description: "`rsync -a --delete dist/ /var/www/site/` looks atomic; it isn't. For true zero-window swaps, build in a sibling dir and rename."
 ---
 
-> **Source:** [deploy-wiki](https://github.com/RogerSquare/rog-wiki) — the wiki's VPS deploy script
+> **Source:** [deploy-wiki](https://github.com/RogerSquare/r-that-wiki) — the wiki's VPS deploy script
 > **Category:** Pattern — deployment
 
 **rsync atomic swap** — deploy a static site with zero "it's broken for 200ms while rsync is mid-copy". Build into a sibling directory, then `mv` the symlink atomically. Alternative: accept the tiny window `rsync --delete` has in exchange for simpler code.
@@ -60,7 +60,7 @@ nginx -s reload   # if nginx root is the symlink
 #!/bin/bash
 set -euo pipefail
 
-REPO_DIR=/opt/rog-wiki
+REPO_DIR=/opt/r-that-wiki
 WEB_DIR=/var/www/wiki
 
 cd "$REPO_DIR"
@@ -77,7 +77,7 @@ chown -R www-data:www-data "$WEB_DIR"
 #!/bin/bash
 set -euo pipefail
 
-REPO_DIR=/opt/rog-wiki
+REPO_DIR=/opt/r-that-wiki
 RELEASES_DIR=/var/www/releases
 CURRENT_LINK=/var/www/wiki
 
@@ -108,7 +108,7 @@ root /var/www/wiki;   # follows symlink → /var/www/releases/<timestamp>
 
 ## How it's used
 
-- **rog-wiki** — currently uses the simple `rsync --delete` approach
+- **R-That Wiki** — currently uses the simple `rsync --delete` approach
 - **Pattern applies** to any static-site deploy where zero-window matters
 
 ## Gotchas

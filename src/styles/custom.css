@@ -1,5 +1,5 @@
 /*
- * rog-wiki theme — refined
+ * R-That Wiki theme — refined
  * Inspiration: developer.apple.com/documentation (restraint, whitespace, hierarchy)
  * Brand: r-that.com (dark, amber accent #fdb32a, Inter + DM Mono)
  *
@@ -195,6 +195,18 @@ body {
   margin-top: 1.75em;
   color: var(--sl-color-gray-2);
 }
+
+/* Starlight sizes the anchor-link icon relative to the .sl-heading-wrapper
+ * font-size, NOT the heading element's own font-size. Since we override the
+ * heading text size above but leave the wrapper at Starlight's defaults
+ * (--sl-text-h2 = 29-35px vs our 24px h2), the icon ends up rendered larger
+ * than the heading text next to it. Align the wrapper font-size to match our
+ * headings, and nudge --sl-anchor-icon-size down from the 0.8275em default so
+ * the icon reads as a subtle affordance rather than a chunky emoji. */
+.sl-markdown-content .sl-heading-wrapper.level-h2 { font-size: var(--sl-text-2xl); }
+.sl-markdown-content .sl-heading-wrapper.level-h3 { font-size: var(--sl-text-xl);  }
+.sl-markdown-content .sl-heading-wrapper.level-h4 { font-size: var(--sl-text-lg);  }
+.sl-markdown-content .sl-heading-wrapper          { --sl-anchor-icon-size: 0.65em; }
 
 /* Headings next to each other don't need extra top margin */
 .sl-markdown-content h1 + h2,
@@ -478,7 +490,13 @@ starlight-sidebar,
  * 14. TOP NAV (HEADER)
  * ========================================================================= */
 
-.header {
+/* Starlight renders two nested elements sharing class="header": the outer
+ * <header> from Page.astro (the sticky nav bar) and an inner <div> from
+ * Header.astro (a flex container inside it). Using plain `.header` targeted
+ * both, stacking two border-bottoms / two blurred backgrounds and producing
+ * a visible double line right under the search bar. Scoping to the tag name
+ * isolates the treatment to the outer sticky element only. */
+header.header {
   background: var(--wiki-chrome-bg) !important;
   backdrop-filter: saturate(180%) blur(12px);
   -webkit-backdrop-filter: saturate(180%) blur(12px);

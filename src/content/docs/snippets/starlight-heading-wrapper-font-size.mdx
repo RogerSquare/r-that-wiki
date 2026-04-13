@@ -1,0 +1,73 @@
+---
+title: Starlight heading wrapper font-size drift
+description: Starlight sizes the anchor-link icon relative to `.sl-heading-wrapper`, NOT the heading element. Override the heading's font-size and the icon ends up larger than the text.
+---
+
+> **Source:** [r-that-wiki/src/styles/custom.css](https://github.com/RogerSquare/r-that-wiki/blob/main/src/styles/custom.css) — the `.sl-heading-wrapper.level-h*` overrides · [Starlight anchor-links.css](https://github.com/withastro/starlight/blob/main/packages/starlight/style/anchor-links.css) — the wrapper-relative sizing
+> **Category:** Snippet — Astro / Starlight
+
+**Starlight heading wrapper font-size drift** — Starlight's anchor-link icon next to each heading is sized in `em` relative to a *wrapper div*, not the heading element itself. If you override only the heading's `font-size`, the icon stays at the default wrapper size and ends up visibly larger than the heading text it's labeling.
+
+## What it is
+
+Each heading on a Starlight page is wrapped in a div with the icon:
+
+```html
+<div class="sl-heading-wrapper level-h2">
+  <h2 id="why-it-exists">Why it exists</h2>
+  <a class="sl-anchor-link" href="#why-it-exists">
+    <span class="sl-anchor-icon"><svg width="16" height="16">...</svg></span>
+  </a>
+</div>
+```
+
+Starlight's defaults:
+
+```css
+.sl-markdown-content .sl-heading-wrapper.level-h2 { font-size: var(--sl-text-h2); }
+.sl-markdown-content .sl-heading-wrapper          { --sl-anchor-icon-size: 0.8275em; }
+.sl-markdown-content .sl-anchor-icon > svg        { width: var(--sl-anchor-icon-size); }
+```
+
+`--sl-text-h2` resolves to `--sl-text-3xl` (29px) at narrow viewports and `--sl-text-4xl` (35px) at wider viewports. The icon is sized at `0.8275em` of the **wrapper**, so 24-29px.
+
+If you override only the heading element:
+
+```css
+/* This sets the h2 TEXT to 24px but doesn't touch the wrapper. */
+.sl-markdown-content h2 {
+  font-size: var(--sl-text-2xl);  /* 24px */
+}
+```
+
+…the wrapper stays at 29-35px. Icon stays at 24-29px. Heading text is 24px. Result: an oversized chain-link icon next to a smaller heading.
+
+## The fix
+
+Override the wrapper's font-size to match your heading scale, and adjust `--sl-anchor-icon-size` if you want the icon to feel more like an affordance than a competing glyph:
+
+```css
+.sl-markdown-content .sl-heading-wrapper.level-h2 { font-size: var(--sl-text-2xl); }
+.sl-markdown-content .sl-heading-wrapper.level-h3 { font-size: var(--sl-text-xl);  }
+.sl-markdown-content .sl-heading-wrapper.level-h4 { font-size: var(--sl-text-lg);  }
+.sl-markdown-content .sl-heading-wrapper          { --sl-anchor-icon-size: 0.65em; }
+```
+
+Now:
+- Wrapper font-size = your heading font-size (single source of truth)
+- Icon = `0.65em` of that → ~16px next to a 24px h2, visibly subordinate
+- Starlight's other layout math (padding-inline-end, anchor offsets) keeps working from the right base
+
+## Why it exists
+
+Starlight separates the heading from the anchor for a layout reason: the wrapper has padding-inline-end + the anchor has matching margin-inline-start so the anchor "wraps with" the last word of the heading. To make that math work in `em`, Starlight needs a single font-size at the wrapper level — independent of the heading element. Smart, but it bites when you only override one half.
+
+## Gotchas
+
+- **Don't touch h1.** Starlight's `level-h1` typically sits in a different visual context (page title row). Leaving the default usually looks better.
+- **The 0.8275em default isn't arbitrary** — it's calibrated to look proportional against Starlight's default heading sizes. If you keep the default heading sizes, leave the icon size alone.
+- **Wrapper font-size affects line-height.** Setting wrapper font-size to your heading size also normalizes the line box. If your heading has tight `line-height: 1.2`, you'll get cleaner spacing as a bonus.
+
+## Generalize the principle
+
+Whenever a framework styles a *wrapper* with values your override targets at the *child*, the gap between them silently inherits the framework's default. Always ask: "what's the parent of the thing I'm restyling, and does it carry size/spacing tokens that my child doesn't?" Inspect the wrapper's computed styles before scoping the override.

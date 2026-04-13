@@ -13,16 +13,16 @@ description: A shell script at `/usr/local/bin/deploy-<app>` that pulls, install
 ```bash
 #!/bin/bash
 # /usr/local/bin/deploy-wiki
-# Deploy rog-wiki to /var/www/wiki. Pulls, installs, builds, syncs.
+# Deploy R-That Wiki to /var/www/wiki. Pulls, installs, builds, syncs.
 
 set -euo pipefail
 
-REPO_DIR=/opt/rog-wiki
+REPO_DIR=/opt/r-that-wiki
 WEB_DIR=/var/www/wiki
 
 # First-run clone if the repo isn't there yet
 if [ ! -d "$REPO_DIR" ]; then
-  git clone https://github.com/RogerSquare/rog-wiki.git "$REPO_DIR"
+  git clone https://github.com/RogerSquare/r-that-wiki.git "$REPO_DIR"
 fi
 
 cd "$REPO_DIR"

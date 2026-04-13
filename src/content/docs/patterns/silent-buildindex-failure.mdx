@@ -1,0 +1,73 @@
+---
+title: The silent buildIndex failure
+description: When a file-based store builds an in-memory index with try/catch around per-file parse, a single corrupt file disappears from the API without anyone noticing.
+---
+
+> **Source:** [atrium/backend/lib/tasks.js](https://github.com/RogerSquare/atrium/blob/main/backend/lib/tasks.js) — `buildIndex` with the silent skip · [atrium/backend/scripts/audit-tasks.js](https://github.com/RogerSquare/atrium/blob/main/backend/scripts/audit-tasks.js) — the loud audit script that catches it
+> **Category:** Pattern — Data & storage / observability
+
+**Silent buildIndex failure** — a failure mode unique to file-based data stores that build an in-memory `id → path` index at startup. If even one file fails to parse, `try/catch` quietly skips it. The file still exists on disk and shows up in directory listings, but the API can't find it because the index never knew about it.
+
+## What it is
+
+A specific shape of bug:
+
+1. App boots, walks a data directory.
+2. For each file, parse it (YAML, JSON, whatever) and add `id → filePath` to an in-memory `Map`.
+3. Wrap the parse in `try/catch` so one bad file doesn't crash the whole boot.
+4. On error, log a `warn` and move on.
+5. Done — index built, app starts serving.
+
+The trap: nobody reads `warn` logs. The bad file is invisible to every API endpoint that uses the index. Listing endpoints that scan disk *fresh* still see the file (so it shows up in lists). Single-item lookups via the index 404 the file. The asymmetry is what makes it confusing.
+
+## Why it exists
+
+**The problem we hit:** Atrium's `feat-terminal-claude-cli-001.md` had duplicate YAML frontmatter keys (`started_at` and `reviewed_at` appeared twice). `gray-matter` threw on parse. `buildIndex`'s try/catch logged a `logger.warn` and moved on. The file kept appearing in `GET /api/tasks` (which uses a separate `scanAllTasks` walker) but `GET /api/tasks/feat-terminal-claude-cli-001` returned 404 ("Task not found"). Symptoms looked like a routing bug; root cause was a one-line YAML typo nobody saw because the warning was buried.
+
+**The fix:** convert silent skips into loud, queryable signals.
+
+## The recovery pattern
+
+Three layers:
+
+### 1. Audit script with non-zero exit
+
+A standalone script that walks the same data directory using the same parser and reports every file that would fail. Exit non-zero so CI catches new corruption before it ships.
+
+```js
+// backend/scripts/audit-tasks.js — runs on `npm run audit:tasks`
+const files = collectTaskFiles(TASKS_DIR);
+for (const filePath of files) {
+  try {
+    const { data, content } = matter(fs.readFileSync(filePath, 'utf-8'));
+    // ...validation rules: required fields, valid status, format, duplicate ids
+  } catch (err) {
+    record('parse_error', filePath, err.message);
+  }
+}
+process.exit(totalIssues === 0 ? 0 : 1);
+```
+
+### 2. Health endpoint that surfaces skip count
+
+Optional but recommended: a `/api/health/index` endpoint that returns the number of files skipped during the last buildIndex run. A monitoring alert on `skipped_count > 0` catches drift in production.
+
+### 3. Single-file fix script (or just edit the file)
+
+When the audit finds a corrupted file, fix it. Since the file is unreachable through the API (which is what made it invisible in the first place), you have to edit on disk directly — bypass the usual "always go through the API" rule for this maintenance op.
+
+## When this pattern bites
+
+Every file-based store is at risk:
+- Markdown-as-database ([see the related pattern](../markdown-as-database/))
+- JSON-flat-file stores
+- Per-user config directories
+- Anything where directory listings and key-based lookups go through *different* code paths
+
+If the listing path and the lookup path use the same indexed structure, the bad file disappears from both — easier to notice. The real trap is when listing scans disk fresh while lookup uses the index. The symptoms are inconsistent and the bug looks like routing.
+
+## Gotchas / when not to apply
+
+- **Don't remove the try/catch.** A single corrupt file shouldn't crash the whole boot. The try/catch is correct. The fix is making the *consequence* visible, not removing the safety net.
+- **Don't blanket-fix to "fail loudly on boot."** That breaks production every time someone hand-edits a YAML file. The audit script + health endpoint give you observability without sacrificing resilience.
+- **Don't re-architect to a database.** If markdown-as-database is the right choice for the rest of the system, this failure mode is a design tradeoff to monitor, not a reason to migrate.
