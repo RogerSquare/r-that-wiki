@@ -491,18 +491,304 @@ starlight-sidebar,
   font-size: var(--sl-text-base);
 }
 
-/* Search box — restrained */
-.search-button {
+/* =========================================================================
+ * 14b. SEARCH — button, kbd hint, modal, Pagefind UI
+ * =========================================================================
+ * Starlight renders the search as <site-search><button data-open-modal>...
+ * The button has only Astro-scoped classes, so we target the element itself.
+ */
+
+site-search button[data-open-modal] {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 0.6rem !important;
+  height: 36px !important;
+  padding: 0 0.75rem 0 0.85rem !important;
+  min-width: 240px !important;
+  font-family: var(--sl-font) !important;
   font-size: var(--sl-text-sm) !important;
+  font-weight: 400 !important;
+  letter-spacing: -0.003em !important;
   color: var(--sl-color-gray-4) !important;
   background: var(--sl-color-bg-inline-code) !important;
   border: 1px solid var(--sl-color-hairline) !important;
-  border-radius: 6px !important;
-  transition: border-color 0.15s, color 0.15s;
+  border-radius: 8px !important;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
 }
-.search-button:hover {
+
+site-search button[data-open-modal]:hover {
   border-color: var(--sl-color-hairline-shade) !important;
   color: var(--sl-color-gray-2) !important;
+  background: var(--sl-color-gray-7) !important;
+}
+
+site-search button[data-open-modal]:focus-visible {
+  outline: 2px solid var(--wiki-focus-ring);
+  outline-offset: 2px;
+}
+
+/* Search icon — slightly dimmer, same amber on hover */
+site-search button[data-open-modal] > svg {
+  flex-shrink: 0;
+  color: var(--sl-color-gray-4);
+  transition: color 0.15s ease;
+}
+site-search button[data-open-modal]:hover > svg {
+  color: var(--brand-accent);
+}
+
+/* "Search" label grows to fill the middle */
+site-search button[data-open-modal] > span {
+  flex: 1;
+  text-align: left;
+  margin-right: auto;
+}
+
+/* kbd shortcut pill — pair of individual key caps */
+site-search button[data-open-modal] kbd,
+site-search button[data-open-modal] > kbd {
+  display: inline-flex !important;
+  align-items: center;
+  gap: 2px;
+  font-family: var(--sl-font-mono) !important;
+  font-size: 10px !important;
+  font-weight: 500;
+  line-height: 1;
+  color: var(--sl-color-gray-3) !important;
+  background: transparent !important;
+  padding: 0 !important;
+  border: none !important;
+  box-shadow: none !important;
+  letter-spacing: 0.02em;
+}
+
+/* Individual key caps */
+site-search button[data-open-modal] kbd kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 5px !important;
+  min-width: 18px;
+  height: 18px;
+  background: var(--sl-color-gray-6) !important;
+  border: 1px solid var(--sl-color-hairline-shade) !important;
+  border-radius: 4px !important;
+  color: var(--sl-color-gray-3) !important;
+  font-size: 10px !important;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.3) !important;
+}
+
+:root[data-theme='light'] site-search button[data-open-modal] kbd kbd {
+  background: #ffffff !important;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.08) !important;
+}
+
+/* Mobile — search becomes icon-only */
+@media (max-width: 50rem) {
+  site-search button[data-open-modal] {
+    min-width: 0 !important;
+    width: 36px !important;
+    height: 36px !important;
+    padding: 0 !important;
+    justify-content: center !important;
+    border-radius: 8px !important;
+  }
+  site-search button[data-open-modal] > span,
+  site-search button[data-open-modal] > kbd {
+    display: none !important;
+  }
+}
+
+/* ---- Dialog / modal ---- */
+
+site-search dialog {
+  background: var(--sl-color-bg) !important;
+  border: 1px solid var(--sl-color-hairline-shade) !important;
+  border-radius: 12px !important;
+  box-shadow:
+    0 10px 40px rgba(0, 0, 0, 0.4),
+    0 2px 8px rgba(0, 0, 0, 0.3) !important;
+  max-width: 640px !important;
+  width: calc(100vw - 2rem);
+  color: var(--sl-color-text);
+}
+
+site-search dialog::backdrop {
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+:root[data-theme='light'] site-search dialog::backdrop {
+  background: rgba(0, 0, 0, 0.25);
+}
+
+site-search .dialog-frame {
+  padding: 0 !important;
+}
+
+/* Cancel button on mobile */
+site-search button[data-close-modal] {
+  font-size: var(--sl-text-sm) !important;
+  color: var(--brand-accent) !important;
+  background: transparent !important;
+  border: none !important;
+  padding: 0.75rem 1rem !important;
+}
+
+/* ---- Pagefind UI (inside the modal) ---- */
+
+#starlight__search {
+  padding: 0;
+}
+
+.pagefind-ui {
+  --pagefind-ui-scale: 0.9;
+  --pagefind-ui-primary: var(--brand-accent);
+  --pagefind-ui-text: var(--sl-color-text);
+  --pagefind-ui-background: var(--sl-color-bg);
+  --pagefind-ui-border: var(--sl-color-hairline);
+  --pagefind-ui-tag: var(--sl-color-gray-6);
+  --pagefind-ui-border-width: 1px;
+  --pagefind-ui-border-radius: 8px;
+  --pagefind-ui-image-border-radius: 6px;
+  --pagefind-ui-image-box-ratio: 3 / 2;
+  --pagefind-ui-font: var(--sl-font);
+}
+
+/* Search input — big, airy, monospace-tinged label styling */
+.pagefind-ui__search-input {
+  background: transparent !important;
+  color: var(--sl-color-white) !important;
+  font-size: var(--sl-text-lg) !important;
+  font-weight: 400 !important;
+  padding: 1.1rem 1.25rem 1.1rem 3rem !important;
+  border: none !important;
+  border-bottom: 1px solid var(--sl-color-hairline) !important;
+  border-radius: 0 !important;
+  width: 100% !important;
+  letter-spacing: -0.005em !important;
+}
+
+.pagefind-ui__search-input::placeholder {
+  color: var(--sl-color-gray-4) !important;
+}
+
+.pagefind-ui__search-input:focus {
+  outline: none !important;
+  border-bottom-color: var(--brand-accent) !important;
+}
+
+.pagefind-ui__form {
+  position: relative;
+}
+
+/* Magnifying glass icon inside the input */
+.pagefind-ui__form::before {
+  content: '';
+  position: absolute;
+  left: 1.25rem;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 16px;
+  height: 16px;
+  background-color: var(--sl-color-gray-4);
+  mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='currentColor'><path d='M21.71 20.29 18 16.61A9 9 0 1 0 16.61 18l3.68 3.68a1 1 0 1 0 1.42-1.39ZM11 18a7 7 0 1 1 0-14 7 7 0 0 1 0 14Z'/></svg>") no-repeat center / contain;
+  -webkit-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='currentColor'><path d='M21.71 20.29 18 16.61A9 9 0 1 0 16.61 18l3.68 3.68a1 1 0 1 0 1.42-1.39ZM11 18a7 7 0 1 1 0-14 7 7 0 0 1 0 14Z'/></svg>") no-repeat center / contain;
+}
+
+/* Clear button */
+.pagefind-ui__search-clear {
+  background: transparent !important;
+  color: var(--sl-color-gray-4) !important;
+  right: 1rem !important;
+}
+.pagefind-ui__search-clear:hover {
+  color: var(--sl-color-white) !important;
+}
+
+/* Results area */
+.pagefind-ui__drawer {
+  padding: 0.5rem 0 !important;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.pagefind-ui__results-area {
+  padding: 0 !important;
+}
+
+.pagefind-ui__message {
+  padding: 2rem 1.25rem !important;
+  color: var(--sl-color-gray-4) !important;
+  font-size: var(--sl-text-sm) !important;
+  text-align: center;
+}
+
+.pagefind-ui__results {
+  padding: 0 !important;
+}
+
+.pagefind-ui__result {
+  padding: 0.85rem 1.25rem !important;
+  border-bottom: 1px solid var(--sl-color-hairline-light) !important;
+  transition: background 0.12s ease;
+}
+
+.pagefind-ui__result:hover,
+.pagefind-ui__result:focus-within {
+  background: var(--brand-accent-bg-tint);
+}
+
+.pagefind-ui__result:last-child {
+  border-bottom: none !important;
+}
+
+.pagefind-ui__result-title {
+  font-size: var(--sl-text-base) !important;
+  font-weight: 500 !important;
+  color: var(--sl-color-white) !important;
+  margin-bottom: 0.25rem !important;
+  letter-spacing: -0.003em;
+}
+
+.pagefind-ui__result-link {
+  color: var(--sl-color-white) !important;
+  text-decoration: none !important;
+}
+
+.pagefind-ui__result-excerpt {
+  font-size: var(--sl-text-sm) !important;
+  color: var(--sl-color-gray-4) !important;
+  line-height: 1.5 !important;
+}
+
+.pagefind-ui__result-excerpt mark {
+  background: var(--brand-accent-subtle) !important;
+  color: var(--brand-accent) !important;
+  padding: 0 2px;
+  border-radius: 2px;
+  font-weight: 500;
+}
+
+.pagefind-ui__result-tags {
+  display: none !important;   /* keeps results clean; tags aren't adding signal yet */
+}
+
+/* Load more button */
+.pagefind-ui__button {
+  background: var(--sl-color-bg-inline-code) !important;
+  border: 1px solid var(--sl-color-hairline) !important;
+  color: var(--sl-color-gray-2) !important;
+  border-radius: 6px !important;
+  padding: 0.5rem 1rem !important;
+  font-size: var(--sl-text-sm) !important;
+  margin: 1rem !important;
+}
+.pagefind-ui__button:hover {
+  border-color: var(--brand-accent) !important;
+  color: var(--brand-accent) !important;
 }
 
 /* =========================================================================
