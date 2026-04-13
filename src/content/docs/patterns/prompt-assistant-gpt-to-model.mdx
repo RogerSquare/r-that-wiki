@@ -1,0 +1,99 @@
+---
+title: Prompt assistant — GPT turns plain language into a model-tuned prompt
+description: User types "a cyberpunk cat"; a GPT call turns it into the prompt format the specific image model expects. Two models, one flow.
+---
+
+> **Source:** [Lumeo](../../projects/lumeo/) — GPT-4o mini as the prompt translator
+> **Category:** Pattern — AI integration
+
+**Prompt assistant** — most users don't want to write image-generation prompts. Most image models don't accept plain English well. Bridge the gap with a smaller language model that takes "what the user said" and outputs "what the image model wants". One extra API call, dramatically better results.
+
+## What it is
+
+Two models in the pipeline:
+
+1. **GPT-4o mini** (or any small LLM) receives the user's plain description + a system prompt describing the target model's vocabulary. Outputs a tuned prompt.
+2. **SDXL / Flux / DALL-E 3 / whatever** receives the tuned prompt, generates an image.
+
+The user sees one input ("what do you want"); the system runs two API calls.
+
+## Why it exists
+
+**The problem:** image models have their own dialects. SDXL likes comma-separated phrases with weighted emphasis. Flux prefers natural-language sentences. DALL-E 3 likes long descriptive paragraphs. A prompt that works well on one fails on another.
+
+Teaching users the dialect is hostile — "AI image generation" becomes a technical skill, not a tool. Auto-translating is the move.
+
+## Shape
+
+```swift
+async func optimizePrompt(userInput: String, targetModel: String) async throws -> String {
+    let systemPrompt: String
+    switch targetModel {
+    case "sdxl":
+        systemPrompt = """
+        You translate user descriptions into prompts for Stable Diffusion XL.
+        Output format: comma-separated phrases, most important first.
+        Use cinematic vocabulary: "cinematic lighting", "8k", "highly detailed".
+        For negatives, include "ugly, blurry, low quality".
+        Output ONLY the prompt, no preamble.
+        """
+    case "flux":
+        systemPrompt = """
+        You translate user descriptions into prompts for Flux.
+        Output format: natural-language sentence, 1-2 sentences max.
+        Describe subject, setting, style, lighting.
+        Output ONLY the prompt, no preamble.
+        """
+    default:
+        return userInput    // fallback: pass through
+    }
+
+    let chatReq = try URLRequest.post(
+        url: URL(string: "https://api.openai.com/v1/chat/completions")!,
+        body: [
+            "model": "gpt-4o-mini",
+            "messages": [
+                ["role": "system", "content": systemPrompt],
+                ["role": "user",   "content": userInput],
+            ],
+            "temperature": 0.7,
+        ],
+        auth: "Bearer \(OPENAI_KEY)"
+    )
+
+    let data = try await URLSession.shared.data(for: chatReq).0
+    let response = try JSONDecoder().decode(ChatResponse.self, from: data)
+    return response.choices[0].message.content.trimmingCharacters(in: .whitespacesAndNewlines)
+}
+```
+
+## Showing the user
+
+- **Input**: plain language textarea ("what do you want")
+- **Optimized prompt shown**: the actual prompt the image model will receive. Read-only by default, editable for power users.
+- **Image result**: the output.
+
+Showing the optimized prompt serves two purposes: users learn by osmosis what "good" prompts look like, and advanced users can tweak before generation.
+
+## How it's used
+
+- **Lumeo** — every generation pipes through GPT-4o mini for prompt tuning
+- **Pattern generalizes** to any tool where two ML models produce a compound UX: translator → classifier, summarizer → sentiment analyzer, entity extractor → knowledge-base lookup
+
+## Gotchas
+
+- **Model-specific system prompts.** One prompt for all target models produces mediocre results. Maintain a system-prompt-per-target-model.
+- **Latency stacks.** GPT call + image call = total latency. For fast image models (SDXL turbo, ~2s), the GPT step (~1s) is a noticeable fraction. For slow models (large flux, 30s), irrelevant.
+- **Cost stacks.** GPT-4o mini is cheap (~$0.0002 per prompt) but non-zero. For a free tier, skip the prompt assistant on guest accounts.
+- **GPT hallucinates parameters.** If the system prompt says "include CFG scale", GPT might invent "CFG scale: 8". Strip or validate in post. Only let GPT produce the prompt *text*, not API parameters.
+- **User-editable optimized prompt.** Once users see the optimized version, they'll want to tweak. Let them — it's the teachable moment.
+- **Language detection.** User types in French? GPT produces the prompt in French; the image model does better in English. Either translate in the system prompt or preserve the user's language.
+- **Safety layering.** GPT refuses some prompts (weapons, violence, etc.). The user might see the rejection but blame the image model. Bubble up the rejection with clear attribution.
+- **Skip for advanced users.** A checkbox "I'll write my own prompt" bypasses the assistant. Users who know what they want don't need help.
+- **Cache aggressively.** The same "a cat in sunglasses" input produces the same optimized prompt. Cache the GPT response by input hash — saves money on iteration.
+
+## See also
+
+- [projects/lumeo](../../projects/lumeo/)
+- [patterns/replicate-submit-poll-retrieve](../replicate-submit-poll-retrieve/) — the second half of the pipeline
+- [patterns/ai-chat-dispatch-to-claude-cli](../ai-chat-dispatch-to-claude-cli/) — sibling pattern; uses a local CLI instead of API

@@ -1,0 +1,114 @@
+---
+title: API keys in mobile apps — always proxy
+description: Embedded keys are extractable. For distributed apps, keys go in a thin proxy server your app calls instead. For personal-use apps, embed and accept the risk.
+---
+
+> **Source:** [Lumeo](../../projects/lumeo/) — current limitation, proxy upgrade path
+> **Category:** Pattern — mobile security
+
+**API keys in mobile apps** — any key embedded in a shipped app binary can be extracted. "Obfuscation" and keychain storage delay the extraction, they don't prevent it. For apps you distribute to users, always proxy API calls through a server you control. For personal apps where you're the only user, embed the key and move on.
+
+## The problem
+
+An iOS app binary can be extracted (jailbreak, IPA analysis tools, reverse engineering). Strings in the binary are visible. Once a user has your API key:
+
+1. They hit your OpenAI/Replicate/Anthropic bill directly
+2. You can't revoke a single user's access without rotating the key for everyone
+3. Rate limits and abuse are scoped to your account
+
+Same for Android APK analysis. "Client-side secret" is an oxymoron.
+
+## When you can embed the key
+
+- **Personal use only** — you're the only user, risk is "someone finds the key in my GitHub repo", which you've already gitignored
+- **Free-tier APIs with daily caps** — if usage is bounded by the API anyway, a leaked key is annoying not catastrophic
+- **Dev/staging builds** — fine to embed the dev key; swap for prod builds
+
+## When you must proxy
+
+- **Distributed via App Store / Play Store**
+- **Multi-user**
+- **Per-user rate limits needed**
+- **Key has real billing impact**
+- **API requires user-identifying auth that your server can add**
+
+## Proxy shape
+
+```
+[iOS app] → [your proxy (Node/Express on your VPS)] → [Replicate/OpenAI/...]
+              (adds your API key,
+               applies per-user rate limits,
+               records usage)
+```
+
+Proxy code:
+
+```ts
+import express from 'express';
+const app = express();
+
+app.use(express.json());
+app.use(requireUserAuth);           // your own user auth
+app.use(perUserRateLimit);
+
+app.post('/api/generate', async (req, res) => {
+  const user = req.user;             // from your auth middleware
+
+  // Enforce per-user quota
+  if (user.monthlyGenerations >= user.quota) {
+    return res.status(429).json({ error: 'quota exceeded' });
+  }
+
+  const replicateRes = await fetch('https://api.replicate.com/v1/predictions', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Token ${process.env.REPLICATE_KEY}`,  // key lives only here
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ version: req.body.model, input: req.body.input }),
+  });
+
+  const data = await replicateRes.json();
+
+  // Record usage, audit log
+  await db.recordGeneration(user.id, data.id);
+
+  res.json(data);
+});
+```
+
+iOS calls your proxy with the user's auth token instead of Replicate's. Proxy holds the real key.
+
+## What you gain by proxying
+
+- **Single key.** Rotating a compromised key doesn't require a new app release.
+- **Per-user quotas.** Free tier = 10 generations/day; paid = unlimited. Your server decides.
+- **Usage billing visibility.** You see which user is costing what.
+- **Safety filters / content policies.** You can block certain inputs or outputs centrally.
+- **Multi-model routing.** User asks "generate an image"; you pick the cheapest model backend. App doesn't know or care.
+- **Request shape stability.** If Replicate's API changes, you update the proxy and don't ship a new app build.
+
+## What you lose
+
+- **Latency.** One extra network hop. ~50-200ms typically. Negligible for AI generation; noticeable for simple API calls.
+- **Server cost.** You're now running a proxy. Small; not zero.
+- **Single point of failure.** Your server down = your app broken. Health-check and alert.
+
+## Lumeo's current position
+
+Personal use; key embedded. The proxy upgrade is the obvious next step if Lumeo ever gets distributed. Docs (in the Lumeo project entry) call this out as a known limitation.
+
+## Gotchas
+
+- **"Just obfuscate the key."** Doesn't work. Obfuscation slows extraction from 5 minutes to 50 minutes. Not a defense.
+- **"Keychain is secure."** Keychain protects from other apps and device theft. It doesn't protect from the owner of the device — who is the attacker in this model.
+- **Certificate pinning doesn't help.** It prevents MITM of requests to your proxy. If the key is in the app binary, the attacker skips the network entirely and reads the binary.
+- **Firebase / cloud config.** Shipping the key via a remote config service just moves the extraction point (user intercepts the config response).
+- **App Check / Attestation.** Play Integrity (Android) and App Attest (iOS) let your server verify the request came from an unmodified build of your app. Useful addition to proxying; not a substitute for it.
+- **"What if the user has my key anyway?"** They can use it directly via `curl`. Your app becomes one client among many. The proxy makes your app the *only* authorized client.
+
+## See also
+
+- [projects/lumeo](../../projects/lumeo/)
+- [patterns/replicate-submit-poll-retrieve](../replicate-submit-poll-retrieve/) — what a proxy would call through to
+- [patterns/rate-limit-per-endpoint](../rate-limit-per-endpoint/) — what the proxy adds

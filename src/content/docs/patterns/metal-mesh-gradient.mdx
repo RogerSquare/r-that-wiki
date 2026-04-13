@@ -1,0 +1,99 @@
+---
+title: Metal mesh gradient (SwiftUI)
+description: Animated multi-color gradient backgrounds via a Metal shader wrapped in a SwiftUI view. For when CoreImage isn't quite enough.
+---
+
+> **Source:** [Lumeo](../../projects/lumeo/) — animated backgrounds
+> **Category:** Pattern — iOS graphics
+
+**Metal mesh gradient** — SwiftUI's built-in `MeshGradient` is fine for static gradients; for animated, color-morphing backgrounds, drop down to a Metal shader. Wrap the shader in a `UIViewRepresentable` and pass shader inputs as SwiftUI state. More work than `LinearGradient`; nothing else matches the visual quality.
+
+## What it is
+
+A `MTKView` (MetalKit) hosted inside a SwiftUI view. Each frame, a fragment shader samples from several color points scattered across the screen, interpolates smoothly, and animates the control points' positions with time. The result: a slowly-morphing "clouds of color" backdrop.
+
+## Why it exists
+
+**The problem:** iOS 18 added `MeshGradient` to SwiftUI. It's a great static primitive; animating it smoothly across *many* color points becomes a SwiftUI re-render performance issue. CoreImage filters work but have limited color-blending control.
+
+**The fix:** custom Metal shader. Full control over interpolation math, blending mode, animation. 60fps guaranteed because the GPU does the work.
+
+## Shape
+
+```swift
+// SwiftUI wrapper
+struct MeshGradientView: UIViewRepresentable {
+    let colors: [Color]
+    let animationSpeed: CGFloat
+
+    func makeUIView(context: Context) -> MTKView {
+        let view = MTKView()
+        view.device = MTLCreateSystemDefaultDevice()
+        view.delegate = context.coordinator
+        view.framebufferOnly = true
+        return view
+    }
+
+    func updateUIView(_ uiView: MTKView, context: Context) {
+        context.coordinator.colors = colors
+        context.coordinator.animationSpeed = animationSpeed
+    }
+
+    func makeCoordinator() -> MeshGradientRenderer {
+        MeshGradientRenderer()
+    }
+}
+
+// Metal renderer
+class MeshGradientRenderer: NSObject, MTKViewDelegate {
+    var colors: [Color] = []
+    var animationSpeed: CGFloat = 1.0
+    private var time: Float = 0
+
+    func draw(in view: MTKView) {
+        guard let drawable = view.currentDrawable else { return }
+        time += 1.0 / 60.0 * Float(animationSpeed)
+
+        // ... encode shader with time and colors as uniforms ...
+        // fragment shader outputs per-pixel color via smooth interpolation
+    }
+}
+```
+
+Fragment shader (Metal Shading Language, simplified):
+
+```metal
+fragment float4 meshGradient(
+    FragmentIn in [[stage_in]],
+    constant float &time [[buffer(0)]],
+    constant float4 *colors [[buffer(1)]]
+) {
+    float2 uv = in.uv;
+    // Animate N control points via sin(time) offsets
+    float2 p0 = float2(0.2 + 0.1 * sin(time * 0.3), 0.3 + 0.1 * cos(time * 0.5));
+    float2 p1 = float2(0.8 + 0.1 * sin(time * 0.4), 0.7 + 0.1 * cos(time * 0.3));
+    // ... distance-weighted blend of nearest control points ...
+    return mix(colors[0], colors[1], smoothstep(...));
+}
+```
+
+## How it's used
+
+- **Lumeo** — hero/splash screen background; optionally for other screens as decorative
+- **Pattern generalizes** to any iOS app wanting distinctive animated backgrounds
+
+## Gotchas
+
+- **Metal is iOS 15+ minimum** if you want modern features. Pre-iOS 15, you'd fall back to `CAGradientLayer` (less pretty, far simpler).
+- **Don't render at native resolution.** On a Pro Max iPhone, that's 2796×1290. Render at 50% scale and upscale; nobody notices for a background, and GPU cost drops 75%.
+- **Battery cost.** A continuously-animating Metal view eats battery measurably. Pause when the app backgrounds (`UIApplication.willResignActiveNotification`), resume on foreground.
+- **Screenshot test.** Metal views don't capture nicely in some screenshot tools (the frame is frozen). For App Store screenshots, render to a PNG offscreen first.
+- **Don't animate state too fast.** `updateUIView` fires on every SwiftUI state change. Avoid binding animation speed to something that changes every frame.
+- **Memory.** Each `MTKView` has an associated command buffer pool. For one background view this is fine; for many instances (per-list-item mesh gradients, say), pool views or simplify.
+- **Accessibility.** Respect `UIAccessibility.isReduceMotionEnabled` — render a static gradient for users who've opted out of motion.
+- **Dark mode.** Mesh-gradient color choices that look great in dark mode often look garish in light mode. Maintain two color sets.
+
+## See also
+
+- [projects/lumeo](../../projects/lumeo/)
+- [patterns/controls-to-api-params-mapping](../controls-to-api-params-mapping/) — the UI layer in front of the fancy background

@@ -1,0 +1,155 @@
+---
+title: UI controls as declarative API parameter mapping
+description: One array of control descriptors; one form that renders them; one dictionary that becomes the API body. Every slider and dropdown declared in data.
+---
+
+> **Source:** [Lumeo](../../projects/lumeo/) — ML parameter form
+> **Category:** Pattern — form design
+
+**Controls-to-API mapping** — instead of hand-wiring sliders and dropdowns to API fields, describe each parameter as a data structure (name, type, range, default, label, API key). The form renders from the array; the submit handler reads values into an object matching the API schema. Adding a parameter is one edit; rearranging is a drag.
+
+## What it is
+
+An array of `ControlDescriptor` objects. Each declares:
+- Which control type (slider, toggle, picker, text)
+- The API field name (snake_case or whatever your API uses)
+- Type and constraints (min/max for numbers, options for pickers)
+- Display label, optional help text
+
+The form component iterates the array, renders the right control for each. Form state is a dictionary keyed by API field name. Submit is `JSON.encode(state)`.
+
+## Why it exists
+
+**The problem:** hand-wired forms have redundancy:
+
+```swift
+Slider(value: $steps, in: 1...50)
+    .bind(apiBody.steps)   // manual
+Slider(value: $cfg, in: 1...20)
+    .bind(apiBody.cfg)     // manual again
+Picker("Sampler", selection: $sampler) { ... }
+    .bind(apiBody.sampler) // manual again
+```
+
+Adding a new parameter means:
+1. Add a `@State` variable
+2. Add the control to the view
+3. Wire the binding
+4. Update the request body
+
+Four places to keep in sync. Easy to forget one; silent bugs when the API gets a new field.
+
+**The fix:** data-driven forms. The parameters array is the single source of truth. Adding a parameter is one entry.
+
+## Shape (Swift)
+
+```swift
+struct ControlDescriptor: Identifiable {
+    let id: String              // also the API field name
+    let label: String
+    let help: String?
+    let control: ControlKind
+    let defaultValue: AnyCodable
+}
+
+enum ControlKind {
+    case slider(min: Double, max: Double, step: Double)
+    case toggle
+    case picker(options: [(value: String, label: String)])
+    case text(placeholder: String)
+}
+
+// The parameter catalog
+let imageParams: [ControlDescriptor] = [
+    ControlDescriptor(id: "prompt", label: "Prompt", help: nil,
+                      control: .text(placeholder: "describe the image"),
+                      defaultValue: AnyCodable("")),
+    ControlDescriptor(id: "num_inference_steps", label: "Steps", help: "Higher = slower, more detail",
+                      control: .slider(min: 1, max: 50, step: 1),
+                      defaultValue: AnyCodable(20)),
+    ControlDescriptor(id: "guidance_scale", label: "CFG scale", help: "Prompt adherence",
+                      control: .slider(min: 1, max: 20, step: 0.5),
+                      defaultValue: AnyCodable(7.5)),
+    ControlDescriptor(id: "scheduler", label: "Sampler", help: nil,
+                      control: .picker(options: [
+                          ("DPM++ 2M", "DPM++ 2M"),
+                          ("Euler a",  "Euler a"),
+                          ("DDIM",     "DDIM"),
+                      ]),
+                      defaultValue: AnyCodable("DPM++ 2M")),
+    ControlDescriptor(id: "apply_watermark", label: "Watermark", help: nil,
+                      control: .toggle,
+                      defaultValue: AnyCodable(false)),
+]
+```
+
+Rendering:
+
+```swift
+struct ParamForm: View {
+    @State private var values: [String: AnyCodable] = [:]
+    let params: [ControlDescriptor]
+
+    init(params: [ControlDescriptor]) {
+        self.params = params
+        _values = State(initialValue: Dictionary(uniqueKeysWithValues:
+            params.map { ($0.id, $0.defaultValue) }))
+    }
+
+    var body: some View {
+        Form {
+            ForEach(params) { p in
+                controlFor(p)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func controlFor(_ p: ControlDescriptor) -> some View {
+        switch p.control {
+        case .slider(let min, let max, let step):
+            SliderRow(label: p.label, value: Binding(
+                get: { values[p.id]?.doubleValue ?? 0 },
+                set: { values[p.id] = AnyCodable($0) }
+            ), range: min...max, step: step)
+        case .toggle:
+            Toggle(p.label, isOn: Binding(
+                get: { values[p.id]?.boolValue ?? false },
+                set: { values[p.id] = AnyCodable($0) }
+            ))
+        case .picker(let options):
+            // ...
+        case .text(let placeholder):
+            // ...
+        }
+    }
+}
+
+// Submit: JSON-encode values dictionary
+func submit() async throws {
+    let body = try JSONEncoder().encode(values)
+    // POST to API
+}
+```
+
+## How it's used
+
+- **Lumeo** — every image parameter declared in the catalog; the form renders itself
+- **Pattern generalizes** to any app that sends configurable parameters to an external API (ML models, transcoding jobs, search filters)
+
+## Gotchas
+
+- **`AnyCodable` gets messy.** Swift's type system resists heterogeneous dictionaries. You'll either need a helper type or separate per-type dictionaries (`numbers: [String: Double]`, `strings: [String: String]`, `bools: [String: Bool]`). The latter is ugly but types cleanly.
+- **Per-model catalogs.** Different image models accept different parameter sets. Maintain a catalog per model; switch when the user changes models. Keep shared params (prompt) in a base array.
+- **Defaults matter.** First-run UX is "slap defaults into the form and let the user generate". If defaults are bad (too-high steps = slow first experience), users bounce. Tune defaults per model.
+- **Validation.** A slider can't go out of range, but text fields can. Validate on submit, surface errors inline.
+- **Help text is mandatory for opaque parameters.** "CFG scale" means nothing to most users. "CFG scale: how much the AI follows your prompt (higher = stricter)" is useful.
+- **Visual grouping.** Sliders, toggles, pickers all render differently and the form can look chaotic. Group related parameters (sampling, style, output) with section headers.
+- **Advanced toggle.** 20 parameters overwhelm casual users. Default to 5-6 visible; everything else behind "Advanced".
+- **Save presets.** Users discover parameter combinations they like. "Save as preset" that stores the current values object is a natural win.
+
+## See also
+
+- [projects/lumeo](../../projects/lumeo/)
+- [patterns/replicate-submit-poll-retrieve](../replicate-submit-poll-retrieve/) — the API that receives this body
+- [snippets/swiftui-controls-for-ml-params](../../snippets/swiftui-controls-for-ml-params/) — reusable view components

@@ -1,0 +1,125 @@
+---
+title: SwiftUI slider/picker row — reusable ML parameter control
+description: Row with label, help tooltip, control, current value. Drop into any form; looks the same everywhere.
+---
+
+> **Source:** [Lumeo](../../projects/lumeo/)
+> **Category:** Snippet — SwiftUI
+
+**SwiftUI ML param row** — reusable view that renders "label + control + value readout" consistently. For ML parameter forms where you want every slider to look identical, every toggle to have a help tooltip, every picker to show the current value.
+
+## Shape
+
+```swift
+struct ParamSliderRow: View {
+    let label: String
+    let help: String?
+    @Binding var value: Double
+    let range: ClosedRange<Double>
+    let step: Double
+    let format: (Double) -> String
+
+    init(
+        label: String, help: String? = nil,
+        value: Binding<Double>, range: ClosedRange<Double>, step: Double = 1,
+        format: @escaping (Double) -> String = { String(format: "%.1f", $0) }
+    ) {
+        self.label = label
+        self.help = help
+        self._value = value
+        self.range = range
+        self.step = step
+        self.format = format
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(label).font(.subheadline).fontWeight(.medium)
+                if let help {
+                    Button(action: {}) {
+                        Image(systemName: "questionmark.circle")
+                            .foregroundStyle(.secondary)
+                            .font(.caption)
+                    }
+                    .help(help)
+                }
+                Spacer()
+                Text(format(value))
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+            Slider(value: $value, in: range, step: step)
+        }
+        .padding(.vertical, 4)
+    }
+}
+```
+
+Usage:
+
+```swift
+@State private var steps: Double = 20
+@State private var cfg: Double   = 7.5
+
+var body: some View {
+    Form {
+        ParamSliderRow(
+            label: "Steps", help: "More steps = more detail, slower",
+            value: $steps, range: 1...50, step: 1,
+            format: { "\(Int($0))" }
+        )
+        ParamSliderRow(
+            label: "CFG scale", help: "How strictly to follow the prompt",
+            value: $cfg, range: 1...20, step: 0.5
+        )
+    }
+}
+```
+
+## Companion: picker row
+
+```swift
+struct ParamPickerRow<T: Hashable>: View {
+    let label: String
+    let help: String?
+    @Binding var value: T
+    let options: [(T, String)]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(label).font(.subheadline).fontWeight(.medium)
+                if let help {
+                    Image(systemName: "questionmark.circle")
+                        .foregroundStyle(.secondary).font(.caption)
+                        .help(help)
+                }
+            }
+            Picker("", selection: $value) {
+                ForEach(options, id: \.0) { opt in
+                    Text(opt.1).tag(opt.0)
+                }
+            }
+            .pickerStyle(.segmented)  // or .menu for long lists
+        }
+        .padding(.vertical, 4)
+    }
+}
+```
+
+## Gotchas
+
+- **`.help(...)` shows a tooltip on hover (macOS) and is read by VoiceOver (iOS).** Free accessibility; include it on every help-worthy control.
+- **`.monospacedDigit()`** on the value readout prevents the numeric width from jitteringas digits change (3.5 → 3.7 → 12.0). Requires iOS 15+.
+- **Step increment rounding.** `step: 0.5` on a slider with range 1...20 might produce 7.499999 because of float rounding. Round in the format closure.
+- **Range bounds are inclusive.** `1...50` includes both endpoints. For "strictly less than max" semantics, adjust the range.
+- **Segmented picker caps at ~5 options.** More than that overflows or looks cramped. Switch to `.menu` style for longer option lists.
+- **Picker tag must be `Hashable` and match `selection` type.** Mismatched types silently fail to select.
+- **Animation on value change.** SwiftUI animates slider drags by default. If you update `value` programmatically (e.g. from a preset), wrap in `withAnimation` or `.animation(nil, value: value)` to avoid jank.
+- **Reset button.** Consider a "↺" button next to each row that restores the default. Users tweak and want to back out.
+
+## See also
+
+- [patterns/controls-to-api-params-mapping](../../patterns/controls-to-api-params-mapping/) — the broader data-driven-forms pattern this composes with
+- [projects/lumeo](../../projects/lumeo/)

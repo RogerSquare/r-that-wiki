@@ -1,0 +1,99 @@
+---
+title: UserDefaults as payload history
+description: When a full database is overkill, store JSON-serialized records in UserDefaults. For apps with hundreds of items, not thousands.
+---
+
+> **Source:** [Lumeo](../../projects/lumeo/) — generation history
+> **Category:** Pattern — iOS persistence
+
+**UserDefaults as payload history** — for apps with a few hundred records (not thousands), UserDefaults is a good enough store. Serialize to JSON, stuff it into a single key, decode on read. No Core Data schema, no SQLite dependency, no migration system. When the app grows past this approach, migrate — but start here.
+
+## What it is
+
+A small service that reads, mutates, and writes a JSON-encoded array under a single UserDefaults key. For Lumeo: every generation's prompt, parameters, and result URL is one entry; the whole history is one JSON blob.
+
+## Why it exists
+
+**The problem:** New iOS apps default to Core Data. Core Data is powerful, feature-rich, and the wrong abstraction for a first-pass personal app:
+
+- Xcode schema migrations require discipline from day one
+- Object graph semantics are heavy for "list of records"
+- SwiftData is better but still opinionated
+- Plain SQLite is better too but requires choosing a library
+
+**The fix:** UserDefaults. Keys are strings; values are property-list types (including Data, which holds your JSON). Writes are atomic to the key level. Quotas are generous — UserDefaults happily holds tens of MBs.
+
+## Shape (Swift)
+
+```swift
+struct Generation: Codable, Identifiable {
+    let id: UUID
+    let prompt: String
+    let optimizedPrompt: String
+    let model: String
+    let imageURL: URL
+    let createdAt: Date
+}
+
+class HistoryStore: ObservableObject {
+    @Published private(set) var items: [Generation] = []
+    private let key = "generation_history"
+
+    init() { load() }
+
+    func load() {
+        guard let data = UserDefaults.standard.data(forKey: key),
+              let decoded = try? JSONDecoder().decode([Generation].self, from: data)
+        else { return }
+        items = decoded
+    }
+
+    func add(_ gen: Generation) {
+        items.insert(gen, at: 0)                // newest first
+        if items.count > 500 { items.removeLast(items.count - 500) }
+        save()
+    }
+
+    func remove(id: UUID) {
+        items.removeAll { $0.id == id }
+        save()
+    }
+
+    private func save() {
+        guard let data = try? JSONEncoder().encode(items) else { return }
+        UserDefaults.standard.set(data, forKey: key)
+    }
+}
+```
+
+## When this scales
+
+- **Hundreds of records:** fine.
+- **Small records (under 10KB each):** fine.
+- **Single-user:** fine.
+- **Write frequency:** writes are serialized; 100/sec is OK. Batch if you expect more.
+
+## When to migrate
+
+- **Thousands of records** — load time becomes noticeable.
+- **Individual record updates** — the current pattern reads everything, mutates, writes everything back. Item-level updates want a real DB.
+- **Query by field** — UserDefaults has no indexing. Filter in-memory after load; if that's slow, migrate.
+- **Sync across devices** — iCloud Key-Value Store or CloudKit is the next step.
+
+Migration path: SwiftData (built-in, modern) or GRDB (SQLite wrapper, mature).
+
+## Gotchas
+
+- **Date and URL types need care.** `Codable` handles them via JSONDecoder, but watch out for the encoding strategy. Default JSONEncoder uses ISO8601 for dates — consistent and human-readable. Stick with defaults.
+- **Large blobs in UserDefaults slow app launch.** UserDefaults is loaded into memory on app start. At 10+ MB, you see startup lag. For blobs like images, write to Application Support directory and store only paths in UserDefaults.
+- **`isBackgroundLoad: true`** on recent iOS optimizes this somewhat, but "don't store megabytes in UserDefaults" is still the rule.
+- **Synced across devices?** UserDefaults is per-device. `NSUbiquitousKeyValueStore` syncs via iCloud but has smaller quotas (1MB total, 1KB per key). For multi-device apps, use CloudKit.
+- **Testing.** `UserDefaults.standard` is process-wide. Tests that write to it pollute other tests. Use `UserDefaults(suiteName: "test")` in tests and clear between each.
+- **App Group for extension sharing.** If the main app and an iOS share extension need to see the same history, use `UserDefaults(suiteName: "group.com.you.app")` with an App Group entitlement.
+- **Lossy coding upgrades.** Adding a new non-optional field to `Generation` breaks decoding of old entries. Either make new fields optional (`let newField: String?`) or version your schema and migrate on load.
+- **Clear on uninstall.** Uninstalling the app clears UserDefaults — no leftover data. If you want persistence across reinstalls, use iCloud.
+
+## See also
+
+- [projects/lumeo](../../projects/lumeo/)
+- [patterns/replicate-submit-poll-retrieve](../replicate-submit-poll-retrieve/) — the data source this persists

@@ -1,0 +1,94 @@
+---
+title: Replicate — submit, poll, retrieve
+description: The prediction lifecycle for Replicate's API. Submit returns a handle; poll until it's done; handle the status machine in your client.
+---
+
+> **Source:** [Lumeo](../../projects/lumeo/) — Replicate image generation
+> **Category:** Pattern — API integration
+
+**Submit, poll, retrieve** — Replicate's API for AI image generation (and most heavy ML APIs) is asynchronous. You submit a prediction, get a handle, poll for completion, then retrieve the output. Four statuses, handful of edge cases. This pattern is also what you use for most "long-running HTTP job" APIs.
+
+## What it is
+
+Three phases:
+
+1. **Submit**: `POST /predictions` with model + inputs → returns `{ id, status: 'starting', urls: { cancel, get } }`
+2. **Poll**: `GET /predictions/:id` every ~1s until `status` is `succeeded` or `failed`
+3. **Retrieve**: read `output` from the final response. Image URLs expire after a short window — download immediately.
+
+## Status machine
+
+```
+starting → processing → succeeded
+                   ↓
+                   → failed
+                   ↓
+                   → canceled
+```
+
+Typical first-status progression: `starting` (1-3s) → `processing` (varies widely, a few seconds to minutes depending on model) → `succeeded`. Failures can come in any phase.
+
+## Shape (Swift)
+
+```swift
+func generate(prompt: String, model: String) async throws -> URL {
+    // Submit
+    let submitReq = try URLRequest.post(
+        url: URL(string: "https://api.replicate.com/v1/predictions")!,
+        body: ["version": model, "input": ["prompt": prompt]],
+        auth: "Token \(API_KEY)"
+    )
+    let submitData = try await URLSession.shared.data(for: submitReq).0
+    var prediction = try JSONDecoder().decode(Prediction.self, from: submitData)
+
+    // Poll
+    while prediction.status == "starting" || prediction.status == "processing" {
+        try await Task.sleep(for: .seconds(1))
+        let getReq = try URLRequest.get(
+            url: URL(string: prediction.urls.get)!,
+            auth: "Token \(API_KEY)"
+        )
+        let data = try await URLSession.shared.data(for: getReq).0
+        prediction = try JSONDecoder().decode(Prediction.self, from: data)
+    }
+
+    // Handle outcome
+    switch prediction.status {
+    case "succeeded":
+        guard let firstOutput = prediction.output?.first else {
+            throw PredictionError.emptyOutput
+        }
+        return URL(string: firstOutput)!
+    case "failed":
+        throw PredictionError.failed(prediction.error ?? "unknown")
+    case "canceled":
+        throw PredictionError.canceled
+    default:
+        throw PredictionError.unknownStatus(prediction.status)
+    }
+}
+```
+
+## How it's used
+
+- **Lumeo** — every image generation goes through submit → poll → retrieve
+- **Pattern generalizes** to any async ML API: Replicate, Modal, Banana, Together, Anthropic's async batches
+
+## Gotchas
+
+- **Polling interval.** 1 second is polite; 500ms is twitchy; 5s is sluggish. Exponential backoff (start at 500ms, double up to 5s) handles the variance well.
+- **Output URLs are short-lived.** Replicate's output URLs expire in 1-24 hours. Download and cache locally immediately on success. Users scrolling back weeks later expect to see the image.
+- **`output` shape varies.** Image models return `["https://..."]` (array of URLs). Video models return a single URL. Text models return a string. Don't assume a shape; check.
+- **Model version IDs.** Replicate distinguishes model *names* (`stability-ai/sdxl`) from model *version hashes* (`39ed52f2...`). Pin to a version — the latest of a model can change, breaking your prompt tuning.
+- **Rate limits.** Replicate has account-level and model-level limits. Submit multiple predictions in parallel; don't await them serially in a UI.
+- **Webhooks for long jobs.** For anything over a minute, use Replicate's webhooks instead of polling. Requires a public HTTP endpoint; not an option for a mobile-only app. Polling is fine for Lumeo.
+- **Cancel.** Predictions can be canceled via `POST` to `urls.cancel`. Users changing their mind mid-generation should be able to.
+- **Error messages are raw.** `prediction.error` is often a Python traceback. Don't show it to users; log it, show a friendly "generation failed" instead.
+- **Prediction history.** Replicate keeps predictions for 30 days (at least for paid accounts). Good for retry and audit; not a permanent history — download and store locally.
+- **Safety filter.** Many models refuse to generate certain content; the prediction fails with a safety error. UI should say "this content was rejected", not "unknown error".
+
+## See also
+
+- [projects/lumeo](../../projects/lumeo/)
+- [patterns/prompt-assistant-gpt-to-model](../prompt-assistant-gpt-to-model/) — the upstream step that generates the prompt Replicate receives
+- [patterns/userdefaults-as-payload-history](../userdefaults-as-payload-history/) — local persistence of prediction results
