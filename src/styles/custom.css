@@ -1,0 +1,189 @@
+/*
+ * rog-wiki theme
+ * Matches r-that.com: near-black bg, amber accent, Inter + DM Mono, minimal chrome.
+ * Overrides Starlight's default CSS custom properties.
+ * Starlight theming docs: https://starlight.astro.build/guides/css-and-tailwind/#css-variables
+ */
+
+/* Dark (default) */
+:root {
+  /* Brand accent — warm amber */
+  --brand-accent: #fdb32a;
+  --brand-accent-subtle: rgba(253, 179, 42, 0.12);
+
+  /* Starlight accent — mapped to amber */
+  --sl-color-accent:      var(--brand-accent);
+  --sl-color-accent-high: #ffd271;
+  --sl-color-accent-low:  rgba(253, 179, 42, 0.18);
+  --sl-color-text-accent: var(--brand-accent);
+
+  /* Surfaces */
+  --sl-color-bg:             #050505;
+  --sl-color-bg-nav:         #050505;
+  --sl-color-bg-sidebar:     #050505;
+  --sl-color-bg-inline-code: #151515;
+  --sl-color-bg-accent:      var(--brand-accent);
+
+  /* Text */
+  --sl-color-white: #ffffff;
+  --sl-color-text:  #bbbbbb;
+
+  /* Gray scale (Starlight uses 7 shades; map to Cairn's) */
+  --sl-color-gray-1: #eeeeee;   /* near-white highlights */
+  --sl-color-gray-2: #dddddd;   /* text-strong */
+  --sl-color-gray-3: #bbbbbb;   /* body text */
+  --sl-color-gray-4: #888888;   /* text-muted */
+  --sl-color-gray-5: #444444;   /* dim borders */
+  --sl-color-gray-6: #1e1e1e;   /* card backgrounds */
+  --sl-color-gray-7: #0e0e0e;   /* surface */
+
+  /* Hairlines (borders) */
+  --sl-color-hairline:        rgba(136, 136, 136, 0.15);
+  --sl-color-hairline-light:  rgba(136, 136, 136, 0.10);
+  --sl-color-hairline-shade:  rgba(136, 136, 136, 0.20);
+
+  /* Typography */
+  --sl-font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --sl-font-mono: 'DM Mono', 'Fira Code', ui-monospace, SFMono-Regular, Consolas, monospace;
+
+  /* Content width — a touch narrower than default for comfortable line length */
+  --sl-content-width: 48rem;
+}
+
+/* Light — mirrors Cairn's light mode */
+:root[data-theme='light'] {
+  --brand-accent: #d4940d;
+  --brand-accent-subtle: rgba(212, 148, 13, 0.10);
+
+  --sl-color-accent:      var(--brand-accent);
+  --sl-color-accent-high: #a86e06;
+  --sl-color-accent-low:  rgba(212, 148, 13, 0.18);
+  --sl-color-text-accent: var(--brand-accent);
+
+  --sl-color-bg:             #fafafa;
+  --sl-color-bg-nav:         #fafafa;
+  --sl-color-bg-sidebar:     #fafafa;
+  --sl-color-bg-inline-code: #efefef;
+
+  --sl-color-white: #111111;
+  --sl-color-text:  #444444;
+
+  --sl-color-gray-1: #111111;
+  --sl-color-gray-2: #222222;
+  --sl-color-gray-3: #444444;
+  --sl-color-gray-4: #777777;
+  --sl-color-gray-5: #bbbbbb;
+  --sl-color-gray-6: #e5e5e5;
+  --sl-color-gray-7: #f0f0f0;
+
+  --sl-color-hairline:       rgba(0, 0, 0, 0.10);
+  --sl-color-hairline-light: rgba(0, 0, 0, 0.06);
+  --sl-color-hairline-shade: rgba(0, 0, 0, 0.14);
+}
+
+/* Body typography polish */
+body {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  letter-spacing: -0.005em;
+}
+
+/* Headings — tighter tracking, closer to Cairn's feel */
+h1, h2, h3, h4, h5, h6 {
+  letter-spacing: -0.02em;
+  font-weight: 600;
+}
+h1 { font-weight: 700; }
+
+/* Links — subtle underline, accent on hover (matches Cairn) */
+.sl-markdown-content a:not(.site-title):not(.social-icons a) {
+  color: var(--sl-color-white);
+  text-decoration: none;
+  border-bottom: 1px solid var(--sl-color-hairline);
+  transition: border-color 0.2s, color 0.2s;
+}
+.sl-markdown-content a:hover {
+  color: var(--brand-accent);
+  border-bottom-color: var(--brand-accent);
+}
+
+/* Inline code — slightly more muted */
+.sl-markdown-content :not(pre) > code {
+  font-size: 0.92em;
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: var(--sl-color-gray-2);
+  background: var(--sl-color-bg-inline-code);
+  border: 1px solid var(--sl-color-hairline);
+}
+
+/* Blockquote — mark source lines subtly */
+.sl-markdown-content blockquote {
+  border-left: 2px solid var(--sl-color-hairline);
+  padding-left: 1rem;
+  color: var(--sl-color-gray-4);
+  font-size: 0.92em;
+  font-style: normal;
+}
+.sl-markdown-content blockquote strong {
+  color: var(--sl-color-gray-2);
+}
+
+/* Table — match Cairn's restrained style */
+.sl-markdown-content table {
+  font-size: 0.92em;
+}
+.sl-markdown-content th {
+  font-weight: 500;
+  color: var(--sl-color-gray-4);
+  font-size: 0.8em;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-bottom: 1px solid var(--sl-color-hairline-shade);
+}
+.sl-markdown-content td {
+  border-bottom: 1px solid var(--sl-color-hairline);
+}
+
+/* Sidebar — tighter, more terminal-feeling */
+.sidebar-content {
+  font-size: 0.9rem;
+}
+.sidebar-content summary,
+.sidebar-content ul li a {
+  letter-spacing: -0.003em;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: var(--sl-color-bg);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--sl-color-hairline);
+  border-radius: 10px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--sl-color-gray-4);
+}
+
+/* "Source" line at top of entries — treat like metadata */
+.sl-markdown-content > blockquote:first-child {
+  font-family: var(--sl-font-mono);
+  font-size: 0.82em;
+  padding: 0.75rem 1rem;
+  margin-bottom: 1.5rem;
+  background: var(--sl-color-bg-inline-code);
+  border-left: 2px solid var(--brand-accent);
+  border-radius: 4px;
+}
+
+/* Syntax-highlighted code blocks — muted panel */
+.expressive-code,
+.sl-markdown-content pre {
+  border: 1px solid var(--sl-color-hairline) !important;
+  border-radius: 6px !important;
+}
